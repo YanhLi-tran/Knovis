@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 
 	"knovis/service/userapi/internal/config"
 	"knovis/service/userapi/internal/errs"
@@ -24,8 +25,8 @@ var configFile = flag.String("f", "etc/user-api.yaml", "the config file")
 func main() {
 	flag.Parse()
 
-	// 加载 .env(可选), 供 yaml 中 ${VAR} 环境变量展开使用
-	_ = godotenv.Load()
+	// 加载 .env(项目根; 从启动目录向上查找), 供 yaml 中 ${VAR} 环境变量展开使用
+	loadEnvFile()
 	// 为缺失的环境变量提供默认值(.env / 已设置的环境变量优先)
 	setDefault("HOST", "0.0.0.0")
 	setDefault("PORT", "8080")
@@ -83,5 +84,26 @@ func main() {
 func setDefault(key, val string) {
 	if os.Getenv(key) == "" {
 		_ = os.Setenv(key, val)
+	}
+}
+
+// loadEnvFile 从当前工作目录逐级向上查找 .env(通常位于项目根, 与 go.mod 同级)并加载,
+// 使服务从任意子目录启动都能读取到项目根的 .env
+func loadEnvFile() {
+	dir, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	for {
+		envPath := filepath.Join(dir, ".env")
+		if _, err := os.Stat(envPath); err == nil {
+			_ = godotenv.Load(envPath)
+			return
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return
+		}
+		dir = parent
 	}
 }
