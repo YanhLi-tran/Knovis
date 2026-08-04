@@ -8,7 +8,7 @@ Knovis 作为用户/动态数据的 **owner**，通过 REST 接口对外提供�
 
 - **框架**: go-zero（rest api，goctl 生成）
 - **ORM**: go-zero sqlx
-- **数据库**: MySQL 8.x（表名 `user` / `post`）
+- **数据库**: MySQL 8.x（表名 `knovis_user` / `knovis_post`）
 - **缓存**: Redis（邮箱验证码，TTL 5 分钟）
 - **认证**: JWT（HS256，go-zero 内置 jwt 中间件）
 - **邮件**: SMTP（QQ 邮箱 + gomail）
@@ -103,17 +103,19 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 
 - **Base URL**: `http://localhost:8080`
 - **认证**: 需要登录的接口在 Header 携带 `Authorization: Bearer <token>`
-- **错误响应**: `{"message": "错误说明"}`，HTTP 状态码区分（400/401/403/404/409/500）
+- **错误响应**: `{"code": <业务码=HTTP状态码>, "message": "错误说明"}`（400/401/403/404/409/429/500）
 
 ### 用户模块
 
-#### POST /register 注册（公开）
+#### POST /register 注册（公开，暂不强制校验验证码）
 
 ```json
 {"username":"张三","password":"abc123","confirm_password":"abc123","email":"user@example.com","code":"123456"}
 ```
 
 → `{"message":"注册成功","user_id":1}`
+
+> 说明：注册接口的验证码校验目前处于**注释状态**（与参考项目一致，开发/测试可跳过验证码）；上线前需在 `internal/logic/registerlogic.go` 中启用 `checkCode` 校验。
 
 #### POST /login 登录（公开）
 
@@ -222,5 +224,7 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 
 ## 验证码说明
 
-- 验证码 6 位数字，存 Redis（key=邮箱，TTL 300s），一次性使用（注册/改邮箱成功后删除）。
+- 验证码 6 位数字，存 Redis（key=邮箱，TTL 300s），一次性使用。
+- 当前**注册不强制校验验证码**（校验逻辑已注释，上线时启用）；`PUT /user/email` 修改邮箱仍强制校验。
+- 防滥用：同一邮箱 60 秒内仅允许发送一次；验证码错误超过 5 次自动作废。
 - SMTP 使用 QQ 邮箱授权码；未配置 SMTP 时 `/send-code` 会返回 500，但验证码已写入 Redis（开发环境可直接 `redis-cli GET <email>` 取码用于测试）。
