@@ -229,6 +229,7 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 ## Agent 对接改造清单（供 agent-go 重构参考）
 
 > 基于对 `agent-go`（agent-go 项目）现有实现的调研，列出重构时的对接要点。Knovis 侧接口已就绪，无需改动（除标注"可选"项）。
+> 可直接转发的改进提示词见 `docs/agent-go-improvement-prompt.md`。
 
 ### 1. JWT：从"自管签发"切到"只校验不签发"
 
