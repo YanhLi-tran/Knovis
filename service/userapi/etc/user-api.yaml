@@ -1,0 +1,31 @@
+# Knovis user-api 配置
+# 支持 ${VAR} 环境变量展开(conf.UseEnv); 缺失时使用 main 中注册的默认值(或 .env 提供)
+Name: user-api
+Host: "${HOST}"
+Port: ${PORT}
+
+MySQL:
+  Host: "${DB_HOST}"
+  Port: ${DB_PORT}
+  User: "${DB_USER}"
+  Password: "${DB_PASSWORD}"
+  Database: "${DB_NAME}"
+
+Redis:
+  Host: "${REDIS_HOST}"
+  Type: node
+  Pass: "${REDIS_PASSWORD}"
+
+Auth:
+  AccessSecret: "${JWT_SECRET}"
+  AccessExpire: ${JWT_EXPIRE}
+  Issuer: "${JWT_ISSUER}"
+  Audience: "${JWT_AUDIENCE}"
+
+SMTP:
+  Host: "${SMTP_HOST}"
+  Port: ${SMTP_PORT}
+  Username: "${SMTP_USER}"
+  Password: "${SMTP_PASSWORD}"
+
+UploadDir: "${UPLOAD_DIR}"
