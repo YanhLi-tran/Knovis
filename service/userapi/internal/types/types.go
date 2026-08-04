@@ -6,7 +6,7 @@ package types
 type CreatePostReq struct {
 	UserId  int64  `form:"userId,optional"`
 	Type    string `form:"type"`
-	Content string `form:"content"`
+	Content string `form:"content,optional"`
 }
 
 type CreatePostResp struct {
@@ -35,7 +35,7 @@ type DeletePostResp struct {
 type DeleteUserReq struct {
 	ID       int64  `path:"id"`
 	UserId   int64  `form:"userId,optional"`
-	Password string `json:"password"`
+	Password string `json:"password,optional"`
 }
 
 type DeleteUserResp struct {
@@ -155,8 +155,8 @@ type UpdatePasswordResp struct {
 type UpdatePostReq struct {
 	ID            int64 `path:"id"`
 	UserId        int64 `form:"userId,optional"`
-	ShowLikes     bool  `json:"show_likes"`
-	ShowFavorites bool  `json:"show_favorites"`
+	ShowLikes     bool  `json:"show_likes,optional"`
+	ShowFavorites bool  `json:"show_favorites,optional"`
 }
 
 type UpdatePostResp struct {
@@ -166,13 +166,13 @@ type UpdatePostResp struct {
 type UpdateUserReq struct {
 	ID               int64  `path:"id"`
 	UserId           int64  `form:"userId,optional"`
-	Name             string `json:"name"`
-	Avatar           string `json:"avatar"`
-	Bio              string `json:"bio"`
-	EmailVisible     bool   `json:"email_visible"`
-	LikesVisible     bool   `json:"likes_visible"`
-	FavoritesVisible bool   `json:"favorites_visible"`
-	FollowVisible    bool   `json:"follow_visible"`
+	Name             string `json:"name,optional"`
+	Avatar           string `json:"avatar,optional"`
+	Bio              string `json:"bio,optional"`
+	EmailVisible     bool   `json:"email_visible,optional"`
+	LikesVisible     bool   `json:"likes_visible,optional"`
+	FavoritesVisible bool   `json:"favorites_visible,optional"`
+	FollowVisible    bool   `json:"follow_visible,optional"`
 }
 
 type UpdateUserResp struct {
