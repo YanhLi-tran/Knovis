@@ -1,7 +1,7 @@
 -- Knovis 建表 SQL（MySQL 8.x）
 -- 数据库: knovis（建库: CREATE DATABASE IF NOT EXISTS knovis DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;）
 
-CREATE TABLE IF NOT EXISTS `user` (
+CREATE TABLE IF NOT EXISTS `knovis_user` (
   `id`                bigint unsigned NOT NULL AUTO_INCREMENT,
   `name`              varchar(100)  NOT NULL COMMENT '用户名',
   `email`             varchar(100)  NOT NULL COMMENT '邮箱',
@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS `user` (
   UNIQUE KEY `uk_email` (`email`)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COMMENT = '用户表';
 
-CREATE TABLE IF NOT EXISTS `post` (
+CREATE TABLE IF NOT EXISTS `knovis_post` (
   `id`              bigint unsigned NOT NULL AUTO_INCREMENT,
   `user_id`         bigint unsigned NOT NULL COMMENT '作者ID',
   `type`            varchar(20)   NOT NULL COMMENT 'text/image/video',

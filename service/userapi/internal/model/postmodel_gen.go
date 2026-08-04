@@ -60,7 +60,7 @@ type (
 func newPostModel(conn sqlx.SqlConn) *defaultPostModel {
 	return &defaultPostModel{
 		conn:  conn,
-		table: "`post`",
+		table: "`knovis_post`",
 	}
 }
 
