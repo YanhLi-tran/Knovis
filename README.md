@@ -2,7 +2,7 @@
 
 基于 **go-zero** 框架重写的「用户 + 动态」内容空间后端（仿照 AIWallHub，仅保留用户与动态两个模块）。
 
-Knovis 作为用户/动态数据的 **owner**，通过 REST 接口对外提供数据；Agent 系统（`d:\PythonProject\Agent_Project\agent-go`）只校验 JWT、不签发，通过 REST 查询用户与动态，实现业务数据与 Agent 解耦。
+Knovis 作为用户/动态数据的 **owner**，通过 REST 接口对外提供数据；Agent 系统（agent-go 项目）只校验 JWT、不签发，通过 REST 查询用户与动态，实现业务数据与 Agent 解耦。
 
 ## 技术栈
 
@@ -228,7 +228,7 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 
 ## Agent 对接改造清单（供 agent-go 重构参考）
 
-> 基于对 `agent-go`（`d:\PythonProject\Agent_Project\agent-go`）现有实现的调研，列出重构时的对接要点。Knovis 侧接口已就绪，无需改动（除标注"可选"项）。
+> 基于对 `agent-go`（agent-go 项目）现有实现的调研，列出重构时的对接要点。Knovis 侧接口已就绪，无需改动（除标注"可选"项）。
 
 ### 1. JWT：从"自管签发"切到"只校验不签发"
 
