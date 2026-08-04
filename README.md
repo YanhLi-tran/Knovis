@@ -151,6 +151,8 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 {"name":"张三","avatar":"/uploads/a.png","bio":"简介","email_visible":true,"likes_visible":true,"favorites_visible":false,"follow_visible":true}
 ```
 
+> 说明：字段均可选；未传字段按零值覆盖（与参考项目一致），如需部分更新请传全部字段。
+
 #### PUT /user/password 修改密码（需登录）
 
 ```json
@@ -203,6 +205,8 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 ```json
 {"show_likes":false,"show_favorites":false}
 ```
+
+> 说明：字段均可选；未传字段按 `false` 覆盖（与参考项目一致）。
 
 ---
 
