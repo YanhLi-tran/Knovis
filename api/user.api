@@ -1,0 +1,292 @@
+syntax = "v1"
+
+// ========== 类型定义 ==========
+type RegisterReq {
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	ConfirmPassword string `json:"confirm_password"`
+	Email           string `json:"email"`
+	Code            string `json:"code"`
+}
+
+type RegisterResp {
+	Message string `json:"message"`
+	UserID  int64  `json:"user_id"`
+}
+
+type LoginReq {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type LoginResp {
+	Message     string `json:"message"`
+	UserID      int64  `json:"user_id"`
+	Username    string `json:"username"`
+	Token       string `json:"token"`
+	AccessToken string `json:"access_token"`
+}
+
+type SendCodeReq {
+	Email string `json:"email"`
+}
+
+type SendCodeResp {
+	Message string `json:"message"`
+}
+
+type UserInfo {
+	ID               int64  `json:"id"`
+	Name             string `json:"name"`
+	Email            string `json:"email"`
+	Avatar           string `json:"avatar"`
+	Bio              string `json:"bio"`
+	EmailVisible     bool   `json:"email_visible"`
+	LikesVisible     bool   `json:"likes_visible"`
+	FavoritesVisible bool   `json:"favorites_visible"`
+	FollowVisible    bool   `json:"follow_visible"`
+	Status           int64  `json:"status"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+type GetUserReq {
+	ID     int64 `path:"id"`
+	UserId int64 `form:"userId,optional"`
+}
+
+type UserListReq {
+	Page     int `form:"page,default=1"`
+	PageSize int `form:"page_size,default=10"`
+}
+
+type UserListResp {
+	Total    int64      `json:"total"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
+	List     []UserInfo `json:"list"`
+}
+
+type UpdateUserReq {
+	ID               int64  `path:"id"`
+	UserId           int64  `form:"userId,optional"`
+	Name             string `json:"name"`
+	Avatar           string `json:"avatar"`
+	Bio              string `json:"bio"`
+	EmailVisible     bool   `json:"email_visible"`
+	LikesVisible     bool   `json:"likes_visible"`
+	FavoritesVisible bool   `json:"favorites_visible"`
+	FollowVisible    bool   `json:"follow_visible"`
+}
+
+type UpdateUserResp {
+	Message string `json:"message"`
+}
+
+type UpdatePasswordReq {
+	UserId      int64  `form:"userId,optional"`
+	OldPassword string `json:"old_password"`
+	NewPassword string `json:"new_password"`
+}
+
+type UpdatePasswordResp {
+	Message string `json:"message"`
+}
+
+type UpdateEmailReq {
+	UserId   int64  `form:"userId,optional"`
+	Password string `json:"password"`
+	NewEmail string `json:"new_email"`
+	Code     string `json:"code"`
+}
+
+type UpdateEmailResp {
+	Message string `json:"message"`
+}
+
+type DeleteUserReq {
+	ID       int64  `path:"id"`
+	UserId   int64  `form:"userId,optional"`
+	Password string `json:"password"`
+}
+
+type DeleteUserResp {
+	Message string `json:"message"`
+}
+
+type DeleteAccountReq {
+	UserId   int64  `form:"userId,optional"`
+	Password string `json:"password"`
+}
+
+type DeleteAccountResp {
+	Message string `json:"message"`
+}
+
+// ---------- 动态 ----------
+type PostUser {
+	ID   int64  `json:"id"`
+	Name string `json:"name"`
+}
+
+type PostInfo {
+	ID             int64    `json:"id"`
+	User           PostUser `json:"user"`
+	Type           string   `json:"type"`
+	Content        string   `json:"content"`
+	MediaURL       string   `json:"media_url"`
+	MediaURLs      []string `json:"media_urls"`
+	VideoURL       string   `json:"video_url"`
+	VideoDuration  int64    `json:"video_duration"`
+	VideoThumbnail string   `json:"video_thumbnail"`
+	Views          int64    `json:"views"`
+	Likes          int64    `json:"likes"`
+	Comments       int64    `json:"comments_count"`
+	Favorites      int64    `json:"favorites_count"`
+	ShowLikes      bool     `json:"show_likes"`
+	ShowFavorites  bool     `json:"show_favorites"`
+	CreatedAt      string   `json:"created_at"`
+	UpdatedAt      string   `json:"updated_at"`
+}
+
+type CreatePostReq {
+	UserId  int64  `form:"userId,optional"`
+	Type    string `form:"type"`
+	Content string `form:"content"`
+}
+
+type CreatePostResp {
+	Message string `json:"message"`
+	PostID  int64  `json:"post_id"`
+}
+
+type PostListReq {
+	Page     int `form:"page,default=1"`
+	PageSize int `form:"page_size,default=10"`
+}
+
+type PostListResp {
+	Total    int64      `json:"total"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
+	List     []PostInfo `json:"list"`
+}
+
+type GetPostReq {
+	ID int64 `path:"id"`
+}
+
+type DeletePostReq {
+	ID     int64 `path:"id"`
+	UserId int64 `form:"userId,optional"`
+}
+
+type DeletePostResp {
+	Message string `json:"message"`
+}
+
+type UserPostsReq {
+	ID       int64 `path:"id"`
+	Page     int   `form:"page,default=1"`
+	PageSize int   `form:"page_size,default=10"`
+}
+
+type UpdatePostReq {
+	ID            int64 `path:"id"`
+	UserId        int64 `form:"userId,optional"`
+	ShowLikes     bool  `json:"show_likes"`
+	ShowFavorites bool  `json:"show_favorites"`
+}
+
+type UpdatePostResp {
+	Message string `json:"message"`
+}
+
+// 对外契约(Agent 读取当前用户)
+type ProfileReq {
+	UserId int64 `form:"userId,optional"`
+}
+
+// 对外契约(Agent 读取指定用户, 路径参数名为 user_id)
+type ProfileUserReq {
+	UserID      int64 `path:"user_id"`
+	CurrentUser int64 `form:"userId,optional"`
+}
+
+service user-api {
+	@handler Register
+	post /register (RegisterReq) returns (RegisterResp)
+
+	@handler Login
+	post /login (LoginReq) returns (LoginResp)
+
+	@handler SendCode
+	post /send-code (SendCodeReq) returns (SendCodeResp)
+
+	@handler GetPosts
+	get /posts (PostListReq) returns (PostListResp)
+
+	@handler GetPost
+	get /post/:id (GetPostReq) returns (PostInfo)
+}
+
+// 需要登录(JWT)的路由
+@server (
+	jwt: Auth
+)
+service user-api {
+	@handler GetUsers
+	get /user (UserListReq) returns (UserListResp)
+
+	@handler GetUser
+	get /user/:id (GetUserReq) returns (UserInfo)
+
+	@handler UpdateUser
+	put /user/:id (UpdateUserReq) returns (UpdateUserResp)
+
+	@handler DeleteUser
+	delete /user/:id (DeleteUserReq) returns (DeleteUserResp)
+
+	@handler UpdatePassword
+	put /user/password (UpdatePasswordReq) returns (UpdatePasswordResp)
+
+	@handler UpdateEmail
+	put /user/email (UpdateEmailReq) returns (UpdateEmailResp)
+
+	@handler DeleteAccount
+	delete /user/account (DeleteAccountReq) returns (DeleteAccountResp)
+
+	@handler CreatePost
+	post /post (CreatePostReq) returns (CreatePostResp)
+
+	@handler DeletePost
+	delete /post/:id (DeletePostReq) returns (DeletePostResp)
+
+	@handler GetUserPosts
+	get /user/:id/posts (UserPostsReq) returns (PostListResp)
+
+	@handler UpdatePost
+	put /post/:id (UpdatePostReq) returns (UpdatePostResp)
+}
+
+// 对外契约(供 Agent 系统只读调用, 携带 Knovis 签发的 JWT)
+@server (
+	jwt: Auth
+)
+service user-api {
+	@handler GetApiV1User
+	get /api/v1/users/:id (GetUserReq) returns (UserInfo)
+
+	@handler GetApiV1Feed
+	get /api/v1/feed (PostListReq) returns (PostListResp)
+
+	@handler GetApiV1Profile
+	get /api/v1/profile (ProfileReq) returns (UserInfo)
+
+	@handler GetApiV1ProfileUser
+	get /api/v1/profile/:user_id (ProfileUserReq) returns (UserInfo)
+
+	@handler GetApiV1Post
+	get /api/v1/posts/:id (GetPostReq) returns (PostInfo)
+}
+
