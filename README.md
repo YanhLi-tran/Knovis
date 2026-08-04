@@ -226,6 +226,47 @@ goctl model mysql ddl -src sql/schema.sql -dir service/userapi/internal/model
 
 **写操作说明**：Knovis 不实现社交互动模块（点赞/收藏/评论/关注/私信），Agent 侧 Skill 仅保留上表读操作，写操作工具（发帖/评论/点赞/关注等）应在 Agent 侧删除。
 
+## Agent 对接改造清单（供 agent-go 重构参考）
+
+> 基于对 `agent-go`（`d:\PythonProject\Agent_Project\agent-go`）现有实现的调研，列出重构时的对接要点。Knovis 侧接口已就绪，无需改动（除标注"可选"项）。
+
+### 1. JWT：从"自管签发"切到"只校验不签发"
+
+agent-go 当前自管签发 JWT（`internal/auth/jwt.go`，代码注释已预留 SSO 迁移路径）。重构后：
+
+- **停止签发**：删除/停用 `JWTConfig.GenerateToken` 调用链（注册/登录改为引导用户使用 Knovis 的 `/register`、`/login` 获取 token）。
+- **配置对齐**（`internal/config/config.go` / `.env`）：
+  - `JWT_SECRET` = Knovis 的 `JWT_SECRET`（必须一致）
+  - `JWT_ISSUER` = `Knovis`（与 Knovis `JWT_ISSUER` 一致）
+  - `JWT_AUDIENCE` = `agent-go`（与 Knovis `JWT_AUDIENCE` 一致）
+- **claim 解析差异（关键）**：
+  - Knovis 签发 token 的 claims：`userId`（数字）、`iss`、`aud`、`iat`、`exp`；**没有** `user_id`/`username`/`type`
+  - agent-go 现有 `Claims.UserID` 从 `user_id`（string）解析 → 需改为从 `userId`（数字）解析，或与 Knovis 协商增加 `user_id` claim（Knovis 可选兼容）
+  - `username` 等业务字段不再从 token 拿，改由 `GET /api/v1/users/:id` 或 `/api/v1/profile` 查询
+
+### 2. Skill 端点改造（`internal/tools/skill/skills/aiwallhub.go`）
+
+| 工具 | 现状 | 重构动作 |
+| --- | --- | --- |
+| `aiwallhub_get_feed` | GET `/api/v1/feed?limit=&cursor=` | 分页参数对齐：改用 `page` / `page_size`（Knovis 现状）；若重构后仍坚持 `limit`/`cursor`，需 Knovis 增加兼容参数（**可选**，二选一） |
+| `aiwallhub_get_profile` | GET `/api/v1/profile[/:user_id]` | ✅ 无需改动 |
+| `aiwallhub_create_post` / `delete_post` / `comment_post` / `like_post` / `unlike_post` / `follow_user` / `unfollow_user` | 写操作 | **删除**（Knovis 不实现社交模块；发帖/删帖也由用户在 Knovis 前端完成） |
+| 无 | — | **新增**读工具 `aiwallhub_get_post`（GET `/api/v1/posts/:id`，动态详情） |
+| 无 | — | 可选新增读工具 `aiwallhub_get_user`（GET `/api/v1/users/:id`，供 `/auth/me` 透传） |
+
+### 3. 认证与数据链路
+
+- **token 存储透传**：保留现有 `PUT /auth/aiwallhub-token`（AES-256-GCM 加密存储用户 Knovis token），Skill 调用时解密后作为 `Authorization: Bearer <token>` 透传（Knovis 侧验签）——现有机制无需改动。
+- **API 地址**：`AIWALLHUB_API_BASE_URL` 环境变量指向 Knovis（如 `http://127.0.0.1:8080`），当前默认值 `https://api.aiwallhub.com` 需修改。
+- **/auth/me**：重构后可改为调用 `GET /api/v1/users/:id`（用 token 中的 `userId`）透传用户资料；当前实现是查 agent-go 本地 user 表，与 Knovis 数据可能不一致。
+- **错误响应**：Knovis 错误格式为 `{"code": <HTTP状态码>, "message": "..."}`，agent-go 现有 `client.do` 仅按 `status >= 400` 报错，可解析 `message` 字段增强可读性。
+
+### 4. 数据语义提示（对接时注意）
+
+- **email 可见性**：本人或 `email_visible=true` 才返回邮箱（`/api/v1/users/:id`、`/api/v1/profile/:user_id`）。
+- **注销是硬删除**：注销用户后其数据物理消失，`/api/v1/feed` 不会出现已注销用户。
+- **userId 类型**：Knovis 的 `userId` 为数字（`int64`），agent-go 内部用户 ID 为字符串，透传时注意类型转换。
+
 ## 验证码说明
 
 - 验证码 6 位数字，存 Redis（key=邮箱，TTL 300s），一次性使用。
