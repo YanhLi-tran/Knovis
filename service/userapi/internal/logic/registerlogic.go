@@ -47,10 +47,10 @@ func (l *RegisterLogic) Register(req *types.RegisterReq) (resp *types.RegisterRe
 		return nil, bizErr(http.StatusBadRequest, "邮箱格式不正确")
 	}
 
-	// 校验验证码(Redis; 错误次数超限后作废, 校验通过即一次性删除)
-	if err := checkCode(l.ctx, l.svcCtx, req.Email, req.Code); err != nil {
-		return nil, err
-	}
+	// 注册暂不强制校验邮箱验证码(与参考项目一致, 校验逻辑注释保留, 上线时启用)
+	// if err := checkCode(l.ctx, l.svcCtx, req.Email, req.Code); err != nil {
+	// 	return nil, err
+	// }
 
 	// 邮箱唯一性
 	if _, err := l.svcCtx.UserModel.FindOneByEmail(l.ctx, req.Email); err == nil {
