@@ -49,13 +49,13 @@ func main() {
 	var c config.Config
 	conf.MustLoad(*configFile, &c, conf.UseEnv())
 
-	// 统一错误响应: 业务错误带对应 HTTP 状态码, 其余默认 400
+	// 统一错误响应: {"code": <业务码=HTTP状态码>, "message": "..."}
 	httpx.SetErrorHandlerCtx(func(ctx context.Context, err error) (int, any) {
 		var be *errs.BizError
 		if errors.As(err, &be) {
-			return be.Code, map[string]string{"message": be.Msg}
+			return be.Code, map[string]any{"code": be.Code, "message": be.Msg}
 		}
-		return http.StatusBadRequest, map[string]string{"message": err.Error()}
+		return http.StatusBadRequest, map[string]any{"code": http.StatusBadRequest, "message": err.Error()}
 	})
 
 	if err := os.MkdirAll(c.UploadDir, 0o755); err != nil {
