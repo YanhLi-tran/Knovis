@@ -1,0 +1,8 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sentence-transformers==3.4.1
+chromadb==0.6.3
+pymysql==1.1.1
+python-dotenv==1.0.1
+pydantic==2.10.4
+jieba==0.42.1
