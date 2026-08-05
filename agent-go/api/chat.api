@@ -1,0 +1,43 @@
+syntax = "v1"
+
+// 对话流（SSE）+ 提问回答 + 工具审批
+
+type ChatReq {
+	Query     string `json:"query"`
+	SessionId string `json:"session_id,optional"`
+	ApiKey    string `json:"api_key,optional"`
+}
+
+type AnswerReq {
+	SelectedLabels []string `json:"selected_labels,optional"`
+	FreeText       string   `json:"free_text,optional"`
+}
+
+type AnswerResp {
+	Status string         `json:"status"`
+	Answer map[string]any `json:"answer"`
+}
+
+type ApprovalDecideReq {
+	Approved bool   `json:"approved"`
+	Reason   string `json:"reason,optional"`
+}
+
+type ApprovalDecideResp {
+	Status     string `json:"status"`
+	ApprovalId string `json:"approval_id"`
+	Approved   bool   `json:"approved"`
+}
+
+service agent-api {
+	// SSE 流式对话（POST /chat/stream，Content-Type: text/event-stream）
+	// go-zero rest 不原生支持 SSE，运行时由 AddRoute 手动注册 http.HandlerFunc
+	@handler ChatStream
+	post /chat/stream (ChatReq) returns (any)
+
+	@handler AnswerQuestion
+	post /question/:question_id/answer (AnswerReq) returns (AnswerResp)
+
+	@handler DecideApproval
+	post /approval/:approval_id/decide (ApprovalDecideReq) returns (ApprovalDecideResp)
+}

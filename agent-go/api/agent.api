@@ -1,0 +1,12 @@
+syntax = "v1"
+
+// agent-go 主 API 描述文件（模块 import 合并）
+// 运行时路由由 internal/api/server.go 用 go-zero rest AddRoute 注册（SSE/WS/Static 手动注册）
+
+import "auth.api"
+import "session.api"
+import "project.api"
+import "memory.api"
+import "chat.api"
+import "document.api"
+import "health.api"

@@ -1,0 +1,67 @@
+syntax = "v1"
+
+// Session 管理模块
+
+type CreateSessionReq {
+	Title     string `json:"title,optional"`
+	ProjectId string `json:"project_id,optional"`
+}
+
+type UpdateSessionReq {
+	Title  *string `json:"title,optional"`
+	Pinned *bool   `json:"pinned,optional"`
+}
+
+type SessionListResp {
+	Sessions []any `json:"sessions"`
+	Total    int   `json:"total"`
+}
+
+type MessageListResp {
+	Messages []any `json:"messages"`
+	Total    int   `json:"total"`
+}
+
+type SummarizedMessageListResp {
+	Messages []any `json:"messages"`
+	Total    int   `json:"total"`
+	Limit    int   `json:"limit"`
+	Offset   int   `json:"offset"`
+}
+
+type RestoreMessageResp {
+	Status  string `json:"status"`
+	MsgId   uint64 `json:"msg_id"`
+	Message string `json:"message"`
+}
+
+type SessionIdResp {
+	Status string `json:"status"`
+	Id     string `json:"id"`
+}
+
+service agent-api {
+	@handler CreateSession
+	post /sessions (CreateSessionReq) returns (any)
+
+	@handler ListSessions
+	get /sessions () returns (SessionListResp)
+
+	@handler GetSession
+	get /sessions/:id () returns (any)
+
+	@handler UpdateSession
+	patch /sessions/:id (UpdateSessionReq) returns (any)
+
+	@handler DeleteSession
+	delete /sessions/:id () returns (SessionIdResp)
+
+	@handler ListSessionMessages
+	get /sessions/:id/messages () returns (MessageListResp)
+
+	@handler ListSummarizedMessages
+	get /sessions/:id/messages/summarized () returns (SummarizedMessageListResp)
+
+	@handler RestoreMessage
+	post /sessions/:id/messages/:mid/restore () returns (RestoreMessageResp)
+}

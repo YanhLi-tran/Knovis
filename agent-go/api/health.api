@@ -1,0 +1,27 @@
+syntax = "v1"
+
+// 健康检查 + 工具列表
+
+type HealthResp {
+	Status  string `json:"status"`
+	Service string `json:"service"`
+}
+
+type ToolInfo {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Category    string `json:"category"`
+}
+
+type ToolsResp {
+	Tools []ToolInfo `json:"tools"`
+	Total int        `json:"total"`
+}
+
+service agent-api {
+	@handler Health
+	get /health () returns (HealthResp)
+
+	@handler ListTools
+	get /tools () returns (ToolsResp)
+}

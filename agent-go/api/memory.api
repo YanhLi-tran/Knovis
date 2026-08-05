@@ -1,0 +1,7 @@
+syntax = "v1"
+
+// 记忆模块（跨项目单条记忆操作 + TTL + 用户档案）
+// 注：/memory/* 路由在 project.api 中已定义，本文件仅作模块说明，路由集中在 project.api
+
+service agent-api {
+}

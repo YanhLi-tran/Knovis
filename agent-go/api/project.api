@@ -1,0 +1,154 @@
+syntax = "v1"
+
+// 项目管理模块（含项目记忆 CRUD / embed / search / archived）
+
+type CreateProjectReq {
+	Name        string `json:"name"`
+	Description string `json:"description,optional"`
+	Rules       string `json:"rules,optional"`
+	Context     string `json:"context,optional"`
+	UserDefined string `json:"user_defined,optional"`
+}
+
+type UpdateProjectReq {
+	Name        *string `json:"name,optional"`
+	Description *string `json:"description,optional"`
+	Rules       *string `json:"rules,optional"`
+	Context     *string `json:"context,optional"`
+	KeyPoints   *string `json:"key_points,optional"`
+	UserDefined *string `json:"user_defined,optional"`
+}
+
+type ProjectListResp {
+	Projects []any `json:"projects"`
+	Total    int   `json:"total"`
+}
+
+type ProjectIdResp {
+	Status string `json:"status"`
+	Id     string `json:"id"`
+}
+
+type CreateMemoryReq {
+	Content    string `json:"content"`
+	MemoryType string `json:"memory_type,optional"`
+	Source     string `json:"source,optional"`
+	Importance int    `json:"importance,optional"`
+}
+
+type MemoryListResp {
+	Memories []any `json:"memories"`
+	Total    int   `json:"total"`
+}
+
+type MemorySearchResp {
+	Results   []any `json:"results"`
+	Total     int   `json:"total"`
+	Bm25Count int   `json:"bm25_count"`
+	RagCount  int   `json:"rag_count"`
+}
+
+type EmbedResp {
+	Embedded int `json:"embedded"`
+}
+
+type ArchiveListResp {
+	Archives []any `json:"archives"`
+	Total    int   `json:"total"`
+}
+
+type ArchiveMemoryResp {
+	Status           string `json:"status"`
+	Id               string `json:"id"`
+	RestoreExpiresAt any    `json:"restore_expires_at"`
+}
+
+type RestoreMemoryResp {
+	Status string `json:"status"`
+	Id     string `json:"id"`
+	Memory any    `json:"memory"`
+}
+
+type UpsertUserConfigReq {
+	BasicInfo   string `json:"basic_info,optional"`
+	Location    string `json:"location,optional"`
+	Preferences string `json:"preferences,optional"`
+	RawText     string `json:"raw_text,optional"`
+}
+
+type UserConfigResp {
+	UserConfig any `json:"user_config"`
+}
+
+type TTLRunResp {
+	Status                   string `json:"status,optional"`
+	ArchivedCount            int    `json:"archived_count,optional"`
+	FailedCount              int    `json:"failed_count,optional"`
+	CleanedCount             int    `json:"cleaned_count,optional"`
+	TtlWeeks                 int    `json:"ttl_weeks,optional"`
+	RestoreDays              int    `json:"restore_days,optional"`
+	ImportanceExemptThreshold int   `json:"importance_exempt_threshold,optional"`
+	DeletedCount             int    `json:"deleted_count,optional"`
+	TtlDays                  int    `json:"ttl_days,optional"`
+	Rule                     string `json:"rule,optional"`
+	Message                  string `json:"message,optional"`
+}
+
+service agent-api {
+	@handler CreateProject
+	post /projects (CreateProjectReq) returns (any)
+
+	@handler ListProjects
+	get /projects () returns (ProjectListResp)
+
+	@handler GetProject
+	get /projects/:id () returns (any)
+
+	@handler UpdateProject
+	patch /projects/:id (UpdateProjectReq) returns (any)
+
+	@handler DeleteProject
+	delete /projects/:id () returns (ProjectIdResp)
+
+	@handler ListProjectSessions
+	get /projects/:id/sessions () returns (any)
+
+	@handler CreateMemory
+	post /projects/:id/memories (CreateMemoryReq) returns (any)
+
+	@handler ListMemories
+	get /projects/:id/memories () returns (MemoryListResp)
+
+	@handler EmbedPending
+	post /projects/:id/memories/embed () returns (EmbedResp)
+
+	@handler SearchMemories
+	post /projects/:id/memories/search (any) returns (MemorySearchResp)
+
+	@handler ListArchivedMemories
+	get /projects/:id/memories/archived () returns (ArchiveListResp)
+
+	@handler UpdateMemory
+	put /memory/memories/:id (any) returns (any)
+
+	@handler DeleteMemory
+	delete /memory/memories/:id () returns (any)
+
+	@handler ArchiveMemory
+	post /memory/memories/:id/archive () returns (ArchiveMemoryResp)
+
+	@handler RestoreMemory
+	post /memory/archive/:id/restore () returns (RestoreMemoryResp)
+
+	@handler TriggerTTL
+	post /memory/ttl/run () returns (TTLRunResp)
+
+	@handler TriggerMessageTTL
+	post /memory/message-ttl/run () returns (TTLRunResp)
+
+	@handler GetUserConfig
+	get /memory/user-config () returns (UserConfigResp)
+
+	@handler UpsertUserConfig
+	put /memory/user-config (UpsertUserConfigReq) returns (any)
+}

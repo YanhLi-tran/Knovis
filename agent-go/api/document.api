@@ -1,0 +1,31 @@
+syntax = "v1"
+
+// 文档管理 + RAG 检索调试
+
+type ScanReq {
+	DirPath string `json:"dir_path"`
+}
+
+type RagDebugReq {
+	Query  string `json:"query"`
+	TopK   int    `json:"top_k,optional"`
+	DocIds []int  `json:"doc_ids,optional"`
+}
+
+service agent-api {
+	// 上传 PDF（multipart/form-data，字段 file），转发 doc-service
+	@handler UploadDocument
+	post /documents/upload () returns (any)
+
+	@handler ListDocuments
+	get /documents () returns (any)
+
+	@handler DeleteDocument
+	delete /documents/:id () returns (any)
+
+	@handler ScanDocuments
+	post /documents/scan (ScanReq) returns (any)
+
+	@handler RagDebug
+	post /rag/debug (RagDebugReq) returns (any)
+}

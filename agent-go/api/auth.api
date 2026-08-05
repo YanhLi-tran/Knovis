@@ -1,0 +1,67 @@
+syntax = "v1"
+
+// 鉴权模块（SSO 形态：只校验 Knovis 签发的 JWT，不自管签发）
+// 注册/登录/刷新由 Knovis 提供，agent-go 仅保留 logout（公开）+ me + 凭证管理
+
+type LogoutResp {
+	Status  string `json:"status"`
+	Message string `json:"message"`
+}
+
+type MeResp {
+	UserId         string         `json:"user_id"`
+	User           map[string]any `json:"user"`
+	HasLlmKey      bool           `json:"has_llm_key"`
+	HasKnovisToken bool           `json:"has_knovis_token"`
+	AuthType       string         `json:"auth_type"`
+}
+
+type LLMKeyReq {
+	ApiKey string `json:"api_key"`
+}
+
+type LLMKeyResp {
+	Status    string `json:"status,optional"`
+	Message   string `json:"message,optional"`
+	HasLlmKey bool   `json:"has_llm_key,optional"`
+}
+
+type KnovisTokenReq {
+	Token string `json:"token"`
+}
+
+type KnovisTokenResp {
+	Status         string `json:"status,optional"`
+	Message        string `json:"message,optional"`
+	HasKnovisToken bool   `json:"has_knovis_token,optional"`
+}
+
+service agent-api {
+	// 公开：登出（无需 token 即可调用，token 加入本地黑名单）
+	@handler Logout
+	post /auth/logout () returns (LogoutResp)
+
+	// 需要鉴权：透传 Knovis 用户资料
+	@handler Me
+	get /auth/me () returns (MeResp)
+
+	// LLM key 凭证管理（需鉴权）
+	@handler SetLLMKey
+	post /auth/llm-key (LLMKeyReq) returns (LLMKeyResp)
+
+	@handler GetLLMKey
+	get /auth/llm-key () returns (LLMKeyResp)
+
+	@handler DeleteLLMKey
+	delete /auth/llm-key () returns (LLMKeyResp)
+
+	// Knovis token 凭证管理（需鉴权，knovis Skill 读操作用）
+	@handler SetKnovisToken
+	post /auth/knovis-token (KnovisTokenReq) returns (KnovisTokenResp)
+
+	@handler GetKnovisToken
+	get /auth/knovis-token () returns (KnovisTokenResp)
+
+	@handler DeleteKnovisToken
+	delete /auth/knovis-token () returns (KnovisTokenResp)
+}

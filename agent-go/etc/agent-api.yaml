@@ -1,0 +1,40 @@
+Name: agent-api
+Host: 0.0.0.0
+Port: 8001
+Timeout: 300000
+
+# ===== Knovis 对接配置 =====
+# Knovis 用户/动态数据 API 地址（/auth/me 透传 + knovis Skill 读操作复用）
+Knovis:
+  KnovisAPIBaseURL: ${KNOVIS_API_BASE_URL:-http://127.0.0.1:8080}
+
+# ===== 子服务地址 =====
+MemoryServiceURL: ${MEMORY_SERVICE_URL:-http://127.0.0.1:8002}
+DocServiceURL: ${DOC_SERVICE_URL:-http://127.0.0.1:8003}
+
+# ===== MySQL（Agent 私有表）=====
+MySQL:
+  DataSource: ${DB_USER:-root}:${DB_PASSWORD:-your-password}@tcp(${DB_HOST:-127.0.0.1}:${DB_PORT:-3306})/${DB_NAME:-agent_go}?charset=utf8mb4&parseTime=true&loc=Local
+
+# ===== Redis（缓存 + token 黑名单）=====
+Redis:
+  Host: ${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}
+  Pass: ${REDIS_PASSWORD:-}
+  Db: ${REDIS_DB:-0}
+
+# ===== JWT（SSO 形态：只校验 Knovis 签发的 JWT，不自管签发）=====
+JWT:
+  Auth: ${JWT_SECRET:-}
+  Expire: 86400
+  Issuer: ${JWT_ISSUER:-Knovis}
+  Audience: ${JWT_AUDIENCE:-agent-go}
+
+# ===== LLM（兜底 key，优先用户存储的 key / 请求头 X-LLM-API-Key）=====
+DeepSeek:
+  APIKey: ${LLM_API_KEY:-}
+  BaseURL: ${LLM_BASE_URL:-https://api.deepseek.com}
+  Model: ${LLM_MODEL:-deepseek-v4-flash}
+
+# ===== MasterKey（AES-256-GCM 主密钥，加密用户 LLM key / Knovis token）=====
+MasterKey:
+  V1: ${MASTER_KEY_V1:-}
