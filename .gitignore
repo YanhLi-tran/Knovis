@@ -11,3 +11,52 @@ uploads/
 # 构建产物
 *.exe
 *.out
+
+# ===== Agent 系统(agent-go / doc-service / memory-service / local-agent) =====
+
+# 环境变量(含敏感信息, 不入库)
+**/.env
+
+# 构建产物
+*.dll
+*.so
+*.dylib
+
+# 依赖目录
+vendor/
+node_modules/
+
+# Python 缓存与虚拟环境
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.pyc
+
+# Agent 运行数据
+chroma_data/
+uploads/
+logs/
+*.log
+tmp/
+dist/
+build/
+bin/
+
+# Python 子服务运行时数据(chroma 向量库/上传文件, 不入库)
+doc-service/data/
+memory-service/data/
+
+# 本地 embedding 模型(大文件, 由 EMBEDDING_MODEL 环境变量指定/挂载, 不入库)
+memory-service/models/
+
+# 评测脚本本地状态(评测 token, 不入库)
+scripts/.eval_token
+
+# 临时文件
+*.tmp
+*.swp
+*.bak
+.tmp_chat.json
+.tmp_chat1.json

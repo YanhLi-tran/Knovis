@@ -18,9 +18,9 @@
    - 接口描述文件 api/user.api、配置 service/userapi/etc/user-api.yaml
 2. agent-go 项目（本地路径由你方获取，以下为相对仓库根的必读文件）：
    - internal/auth/jwt.go            （当前自管签发 JWT，已预留 SSO 迁移注释）
-   - internal/tools/skill/skills/aiwallhub.go （当前 Skill 定义，含写操作工具）
-   - internal/api/auth_api.go        （/auth/me、/auth/aiwallhub-token 等）
-   - internal/config/config.go       （JWT 与 AIWALLHUB_API_BASE_URL 配置）
+   - internal/tools/skill/skills/knovis.go （当前 Skill 定义，含写操作工具）
+   - internal/api/auth_api.go        （/auth/me、/auth/knovis-token 等）
+   - internal/config/config.go       （JWT 与 KNOVIS_API_BASE_URL 配置）
 
 【改造要求】
 1. JWT 切换为「只校验不签发」：
@@ -29,24 +29,24 @@
      JWT_ISSUER=Knovis，JWT_AUDIENCE=agent-go。
    - claim 差异（关键）：Knovis 签发 token 的 claims 为 userId（数字）、iss、aud、iat、exp，
      没有 user_id/username/type。用户 ID 必须从 userId 解析，username 等业务字段改由接口查询获取。
-2. Skill 只读化（internal/tools/skill/skills/aiwallhub.go）：
-   - 删除全部写工具：aiwallhub_create_post、aiwallhub_delete_post、aiwallhub_comment_post、
-     aiallhub_like_post、aiwallhub_unlike_post、aiwallhub_follow_user、aiwallhub_unfollow_user。
+2. Skill 只读化（internal/tools/skill/skills/knovis.go）：
+   - 删除全部写工具：knovis_create_post、knovis_delete_post、knovis_comment_post、
+     knovis_like_post、knovis_unlike_post、knovis_follow_user、knovis_unfollow_user。
    - 保留并修正读工具：
-     - aiwallhub_get_feed：分页参数由 limit/cursor 改为 page/page_size（与 Knovis 一致）
-     - aiwallhub_get_profile：保持不变（/api/v1/profile[/:user_id]）
+     - knovis_get_feed：分页参数由 limit/cursor 改为 page/page_size（与 Knovis 一致）
+     - knovis_get_profile：保持不变（/api/v1/profile[/:user_id]）
    - 新增读工具：
-     - aiwallhub_get_post：GET /api/v1/posts/:id（动态详情）
+     - knovis_get_post：GET /api/v1/posts/:id（动态详情）
 3. 端点契约以 Knovis README「供 Agent 对接的接口清单」为准：
    - GET /api/v1/users/:id、GET /api/v1/feed、GET /api/v1/profile、GET /api/v1/profile/:user_id、GET /api/v1/posts/:id
-4. 配置接入：AIWALLHUB_API_BASE_URL 环境变量指向 Knovis 服务地址（如 http://127.0.0.1:8080，具体以部署环境为准）。
-5. token 透传：保留 PUT /auth/aiwallhub-token 加密存储用户 Knovis token 的机制，
+4. 配置接入：KNOVIS_API_BASE_URL 环境变量指向 Knovis 服务地址（如 http://127.0.0.1:8080，具体以部署环境为准）。
+5. token 透传：保留 PUT /auth/knovis-token 加密存储用户 Knovis token 的机制，
    Skill 调用 Knovis 时作为 Authorization: Bearer <token> 透传。
 6. /auth/me：改为调用 Knovis GET /api/v1/users/:id（使用 token 中的 userId）透传用户资料。
 
 【验证标准】
 - 端到端联调通过：Knovis /login 签发 token → agent-go 用该 token 校验成功 →
-  aiwallhub_get_feed / aiwallhub_get_profile / aiwallhub_get_post 均正常返回。
+  knovis_get_feed / knovis_get_profile / knovis_get_post 均正常返回。
 - Knovis 错误响应格式为 {"code": <HTTP状态码>, "message": "..."}，需正确处理并透出可读信息。
 - 代码中不存在任何点赞/评论/关注/私信相关逻辑。
 
