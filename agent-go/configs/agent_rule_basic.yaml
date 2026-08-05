@@ -1,0 +1,31 @@
+# Agent 全局固定规则 (agent_rule_basic)
+# 全局固定，由开发者维护，热加载生效
+# 用户不可修改，但可在项目记忆中追加项目级规则
+
+rules:
+  - id: "no_unrelated_promotion"
+    description: "禁止在回答末尾添加与用户问题无关的广告、营销话术或产品推荐"
+    enabled: true
+
+  - id: "no_proactive_tool_guidance"
+    description: "禁止主动引导用户使用某个工具或服务（除非用户明确表达需求）"
+    enabled: true
+
+  - id: "tool_boundary"
+    description: "只在用户明确表达需求时才调用对应工具，不主动发起无关工具调用"
+    enabled: true
+
+  - id: "error_recovery"
+    description: "工具执行出错时，自主反思并换思路重试，连续 5 轮失败才向用户报错"
+    enabled: true
+
+  - id: "final_answer_marker"
+    description: "最终回答必须以 [FINAL_ANSWER] 标记输出，否则视为继续循环"
+    enabled: true
+
+limits:
+  max_otaco_iterations: 15        # OTACO 循环最大迭代次数
+  max_consecutive_errors: 5       # 连续错误上限
+  max_retry_per_tool: 2           # 同一工具 retry 上限（Observation 判定 retry 时）
+  llm_timeout_seconds: 60         # LLM 调用超时
+  tool_timeout_seconds: 30        # 工具执行超时
