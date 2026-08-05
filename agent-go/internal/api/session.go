@@ -9,7 +9,6 @@ import (
 
 	"agent-go/internal/storage"
 
-	"github.com/gin-gonic/gin"
 )
 
 // newUUID 生成 UUID v4（避免引入 google/uuid 依赖）
@@ -40,10 +39,10 @@ type UpdateSessionRequest struct {
 
 // createSession POST /sessions
 // 若指定 project_id，校验该项目存在且归属当前用户（多用户防越权）
-func (s *Server) createSession(c *gin.Context) {
+func (s *Server) createSession(c *GinCompat) {
 	ownerID := c.GetString("client_id")
 	if ownerID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 
@@ -55,17 +54,17 @@ func (s *Server) createSession(c *gin.Context) {
 	if req.ProjectID != "" {
 		p, err := s.repos.Project.GetByID(req.ProjectID, ownerID)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询项目失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "查询项目失败: " + err.Error()})
 			return
 		}
 		if p == nil {
-			c.JSON(http.StatusNotFound, gin.H{"error": "指定的 project_id 不存在"})
+			c.JSON(http.StatusNotFound, H{"error": "指定的 project_id 不存在"})
 			return
 		}
 		if p.OwnerID != ownerID {
 			// 防越权：不能把 session 挂到他人项目下
 			log.Printf("[WARN][api] createSession 越权挂载 clientID=%s projectID=%s", ownerID, req.ProjectID)
-			c.JSON(http.StatusForbidden, gin.H{"error": "无权在该项目下创建 Session"})
+			c.JSON(http.StatusForbidden, H{"error": "无权在该项目下创建 Session"})
 			return
 		}
 	}
@@ -88,7 +87,7 @@ func (s *Server) createSession(c *gin.Context) {
 
 	if err := s.repos.Session.Create(session); err != nil {
 		log.Printf("[ERROR][api] createSession 失败 ownerID=%s projectID=%s err=%v", ownerID, req.ProjectID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建 Session 失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "创建 Session 失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] createSession 成功 id=%s projectID=%s ownerID=%s", session.ID, session.ProjectID, ownerID)
@@ -98,43 +97,43 @@ func (s *Server) createSession(c *gin.Context) {
 }
 
 // listSessions GET /sessions
-func (s *Server) listSessions(c *gin.Context) {
+func (s *Server) listSessions(c *GinCompat) {
 	ownerID := c.GetString("client_id")
 	if ownerID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 
 	sessions, err := s.repos.Session.ListByOwner(ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 Session 列表失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询 Session 列表失败: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"sessions": sessions,
 		"total":    len(sessions),
 	})
 }
 
 // getSession GET /sessions/:id
-func (s *Server) getSession(c *gin.Context) {
+func (s *Server) getSession(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	session, err := s.repos.Session.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "Session 不存在"})
 		return
 	}
 
 	// 权限校验：只能查自己的 Session
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] getSession 越权访问 clientID=%s sessionID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该 Session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权访问该 Session"})
 		return
 	}
 
@@ -143,29 +142,29 @@ func (s *Server) getSession(c *gin.Context) {
 
 // updateSession PATCH /sessions/:id
 // 支持重命名（title）和置顶（pinned），可单独或同时更新
-func (s *Server) updateSession(c *gin.Context) {
+func (s *Server) updateSession(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	var req UpdateSessionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 
 	// 先校验归属
 	session, err := s.repos.Session.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "Session 不存在"})
 		return
 	}
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] updateSession 越权访问 clientID=%s sessionID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权修改该 Session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权修改该 Session"})
 		return
 	}
 
@@ -173,7 +172,7 @@ func (s *Server) updateSession(c *gin.Context) {
 	if req.Title != nil {
 		if err := s.repos.Session.UpdateTitle(id, ownerID, *req.Title); err != nil {
 			log.Printf("[ERROR][api] updateSession 重命名失败 id=%s err=%v", id, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "重命名失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "重命名失败: " + err.Error()})
 			return
 		}
 		log.Printf("[INFO][api] updateSession 重命名成功 id=%s title=%s", id, *req.Title)
@@ -181,7 +180,7 @@ func (s *Server) updateSession(c *gin.Context) {
 	if req.Pinned != nil {
 		if err := s.repos.Session.UpdatePinned(id, ownerID, *req.Pinned); err != nil {
 			log.Printf("[ERROR][api] updateSession 置顶失败 id=%s err=%v", id, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "置顶失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "置顶失败: " + err.Error()})
 			return
 		}
 		log.Printf("[INFO][api] updateSession 置顶成功 id=%s pinned=%v", id, *req.Pinned)
@@ -201,66 +200,66 @@ func (s *Server) updateSession(c *gin.Context) {
 }
 
 // deleteSession DELETE /sessions/:id （软删除，关联消息一并软删除）
-func (s *Server) deleteSession(c *gin.Context) {
+func (s *Server) deleteSession(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	// 先校验归属
 	session, err := s.repos.Session.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "Session 不存在"})
 		return
 	}
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] deleteSession 越权访问 clientID=%s sessionID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除该 Session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权删除该 Session"})
 		return
 	}
 
 	if err := s.repos.Session.SoftDelete(id, ownerID); err != nil {
 		log.Printf("[ERROR][api] deleteSession 软删失败 id=%s err=%v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "删除失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] deleteSession 软删成功 id=%s", id)
 
 	s.auditLogger.Log(CurrentUserID(c), "delete", "session", id, c.ClientIP(), c.GetString(CtxAuthType), nil)
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": id})
+	c.JSON(http.StatusOK, H{"status": "ok", "id": id})
 }
 
 // listSessionMessages GET /sessions/:id/messages
 // 返回某会话的全部消息（按时间正序），用于切换会话时回放历史
-func (s *Server) listSessionMessages(c *gin.Context) {
+func (s *Server) listSessionMessages(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	// 先校验归属
 	session, err := s.repos.Session.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "Session 不存在"})
 		return
 	}
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] listSessionMessages 越权访问 clientID=%s sessionID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该 Session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权访问该 Session"})
 		return
 	}
 
 	msgs, err := s.repos.Message.GetBySessionID(id)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询消息失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询消息失败: " + err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"messages": msgs,
 		"total":    len(msgs),
 	})

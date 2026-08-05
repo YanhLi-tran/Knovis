@@ -7,7 +7,6 @@ import (
 
 	"agent-go/internal/auth"
 
-	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
 
@@ -44,14 +43,16 @@ func NewHandler(hub *Hub, authService *auth.AuthService, authMode string) *Handl
 
 // HandleWS 处理 WebSocket 升级请求
 // 路由：GET /ws/agent?token=<jwt_access_token>
-func (h *Handler) HandleWS(c *gin.Context) {
-	userID := h.authenticate(c)
+func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
+	userID := h.authenticate(w, r)
 	if userID == "" {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "缺少有效鉴权"})
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"缺少有效鉴权"}`))
 		return
 	}
 
-	wsConn, err := h.upgrader.Upgrade(c.Writer, c.Request, nil)
+	wsConn, err := h.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("[WARN][ws] 升级失败 userID=%s err=%v", userID, err)
 		return
@@ -64,14 +65,14 @@ func (h *Handler) HandleWS(c *gin.Context) {
 	go conn.writeLoop()
 	go conn.readLoop()
 
-	log.Printf("[INFO][ws] 连接建立 userID=%s remote=%s", userID, c.ClientIP())
+	log.Printf("[INFO][ws] 连接建立 userID=%s remote=%s", userID, r.RemoteAddr)
 }
 
 // authenticate 鉴权：优先 query token（JWT），dev 模式降级 X-Client-ID
-func (h *Handler) authenticate(c *gin.Context) string {
+func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request) string {
 	// 1) JWT via query param（WebSocket 标准做法）
-	if token := strings.TrimSpace(c.Query("token")); token != "" && h.authService != nil {
-		claims, err := h.authService.IsAccessTokenValid(c.Request.Context(), token)
+	if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" && h.authService != nil {
+		claims, err := h.authService.IsAccessTokenValid(r.Context(), token)
 		if err != nil {
 			log.Printf("[WARN][ws] JWT 校验失败: %v", err)
 			return ""
@@ -80,7 +81,7 @@ func (h *Handler) authenticate(c *gin.Context) string {
 	}
 	// 2) dev 模式降级 X-Client-ID（过渡期兼容）
 	if h.authMode == "dev" {
-		if clientID := strings.TrimSpace(c.GetHeader("X-Client-ID")); clientID != "" {
+		if clientID := strings.TrimSpace(r.Header.Get("X-Client-ID")); clientID != "" {
 			return clientID
 		}
 	}

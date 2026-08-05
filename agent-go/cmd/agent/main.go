@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"flag"
 	"log"
 	"os"
 	"path/filepath"
@@ -25,17 +25,27 @@ import (
 	"agent-go/internal/tools/skill/skills"
 	"agent-go/internal/ws"
 
+	"github.com/zeromicro/go-zero/core/conf"
+
 	"gorm.io/gorm"
 )
 
+var configFile = flag.String("f", "etc/agent-api.yaml", "the config file")
+
 func main() {
+	flag.Parse()
+
 	// 日志格式: 带时间戳 + 文件名 + 行号,便于排障
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 
-	// 加载 .env
+	// 加载 .env（环境变量优先级：环境变量 > yaml > 默认值）
 	loadEnv(".env")
 
-	// 初始化配置管理器
+	// 加载 go-zero 配置（etc/agent-api.yaml，支持 ${VAR:-default} 展开）
+	var c config.RestConfig
+	conf.MustLoad(*configFile, &c)
+
+	// 初始化配置管理器（soul.yaml / agent_rule_basic.yaml 热加载）
 	configDir := filepath.Join(".", "configs")
 	cfgMgr := config.GetManager()
 	if err := cfgMgr.Init(configDir); err != nil {
@@ -151,15 +161,17 @@ func main() {
 	// authSvc 为 nil 时（dev 模式无 JWT secret）仍可注册：load_skill 时 resolveToken 会返回明确错误
 	skillReg.Register(skills.NewKnovisSkillDefinition(authSvc, knovisClient))
 
-	// 创建 API 服务器（P4: 传入 wsHub 给 server，wsHandler 在 NewServer 内创建）
+	// 创建 API 服务器（go-zero rest）并启动
 	server := api.NewServer(orch, questionMgr, cfgMgr, repos, memSvc, ttlScheduler, msgTtlScheduler, authSvc, authMode, wsHub, approvalMgr, docClient, knovisClient)
 
-	// 启动服务
-	port := appCfg.Port
-	log.Printf("[main] Agent Go Service 启动在 http://127.0.0.1:%s", port)
+	port := c.Port
+	if port == 0 {
+		port = 8001
+	}
+	log.Printf("[main] Agent Go Service 启动在 http://%s:%d", c.Host, port)
 	log.Printf("[main] 接口: POST /chat/stream | GET /health | GET /tools | POST /question/:id/answer | POST /auth/logout | GET /auth/me | GET /ws/agent")
 
-	if err := server.Run(port); err != nil {
+	if err := server.Start(c.Host, port); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
 	}
 }
@@ -191,5 +203,4 @@ func loadEnv(path string) {
 			os.Setenv(key, val)
 		}
 	}
-	_ = fmt.Sprint // 避免未使用 import
 }

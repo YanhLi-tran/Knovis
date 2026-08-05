@@ -2,6 +2,7 @@ package api
 
 import (
 	"log"
+	"net/http"
 
 	"agent-go/internal/audit"
 	"agent-go/internal/auth"
@@ -14,12 +15,12 @@ import (
 	"agent-go/internal/tools"
 	"agent-go/internal/ws"
 
-	"github.com/gin-gonic/gin"
+	"github.com/zeromicro/go-zero/rest"
 )
 
-// Server HTTP API 服务器
+// Server HTTP API 服务器（go-zero rest 实现）
 type Server struct {
-	router          *gin.Engine
+	server          *rest.Server
 	orchestrator    *orchestrator.Orchestrator
 	questionMgr     *tools.QuestionManager
 	approvalMgr     *tools.ApprovalManager // P4: 审批管理器（file_write/sandbox_exec 等需审批工具）
@@ -31,31 +32,15 @@ type Server struct {
 	// P3: 鉴权
 	authService *auth.AuthService
 	authMode    string // strict / dev（过渡期 dev：JWT 优先 + X-Client-ID 降级）
-	auditLogger  *audit.Logger  // P3: 审计日志（异步写）
-	wsHandler    *ws.Handler    // P4: WebSocket 升级处理器（本地客户端连接，file/sandbox 工具通道）
-	docClient    *rag.DocClient  // P5: doc-service 客户端(RAG 文档管理 + 检索)
-	knovisClient *knovis.Client  // Knovis 客户端（/auth/me 透传用户资料）
+	auditLogger *audit.Logger  // P3: 审计日志（异步写）
+	wsHandler   *ws.Handler    // P4: WebSocket 升级处理器（本地客户端连接，file/sandbox 工具通道）
+	docClient   *rag.DocClient // P5: doc-service 客户端(RAG 文档管理 + 检索)
+	knovisClient *knovis.Client // Knovis 客户端（/auth/me 透传用户资料）
 }
 
 // NewServer 创建 API 服务器
 func NewServer(orch *orchestrator.Orchestrator, qMgr *tools.QuestionManager, cfgMgr *config.Manager, repos *storage.Repositories, memSvc *memory.Service, ttlSch *memory.TTLScheduler, msgTtlSch *memory.MessageTTLScheduler, authSvc *auth.AuthService, authMode string, wsHub *ws.Hub, approvalMgr *tools.ApprovalManager, docClient *rag.DocClient, knovisClient *knovis.Client) *Server {
-	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
-
-	// CORS 中间件（阶段一允许所有源）
-	r.Use(func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-LLM-API-Key, X-Client-ID")
-		if c.Request.Method == "OPTIONS" {
-			c.AbortWithStatus(204)
-			return
-		}
-		c.Next()
-	})
-
 	s := &Server{
-		router:          r,
 		orchestrator:    orch,
 		questionMgr:     qMgr,
 		approvalMgr:     approvalMgr,
@@ -72,113 +57,126 @@ func NewServer(orch *orchestrator.Orchestrator, qMgr *tools.QuestionManager, cfg
 	}
 	// P4: 创建 WebSocket 处理器（复用 authService 鉴权）
 	s.wsHandler = ws.NewHandler(wsHub, s.authService, s.authMode)
-
-	// P3: 鉴权中间件（替代旧的 X-Client-ID 中间件）
-	// 策略：strict 仅 JWT / dev JWT 优先 + X-Client-ID 降级
-	// 白名单：/health /auth/* /static/* / 自动放行
-	r.Use(s.AuthMiddleware())
-
-	s.registerRoutes()
-	log.Printf("[INFO][api] NewServer 创建成功 authMode=%s", authMode)
 	return s
 }
 
-// registerRoutes 注册路由
-func (s *Server) registerRoutes() {
-	r := s.router
+// Start 启动 go-zero rest 服务
+func (s *Server) Start(host string, port int) error {
+	srv := rest.MustNewServer(rest.RestConf{
+		Host: host,
+		Port: port,
+	}, rest.WithFileServer("/static", http.Dir("./static")))
+	s.server = srv
+	defer srv.Stop()
 
-	// 健康检查
-	r.GET("/health", s.health)
+	// 中间件：CORS + 鉴权（P3: strict 仅 JWT / dev JWT 优先 + X-Client-ID 降级）
+	srv.Use(s.corsMiddleware)
+	srv.Use(s.AuthMiddleware())
+
+	s.registerRoutes(srv)
+	log.Printf("[INFO][api] go-zero rest 服务创建成功 authMode=%s", s.authMode)
+	srv.Start()
+	return nil
+}
+
+// corsMiddleware CORS 中间件（阶段一允许所有源）
+func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-LLM-API-Key, X-Client-ID")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next(w, r)
+	}
+}
+
+// registerRoutes 注册路由（go-zero rest）
+func (s *Server) registerRoutes(srv *rest.Server) {
+	// 健康检查 + 工具列表
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/health", Handler: s.adapt(s.health)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/tools", Handler: s.adapt(s.listTools)})
 
 	// SSO 形态：注册/登录/刷新由 Knovis 提供，agent-go 仅保留 logout（公开）+ me + 凭证管理（需鉴权）
-	authGroup := r.Group("/auth")
-	{
-		authGroup.POST("/logout", s.logout)
-		authGroup.GET("/me", s.me) // /auth/me 需要鉴权（不在白名单），me 内透传 Knovis 用户资料
-		authGroup.POST("/llm-key", s.setLLMKey)
-		authGroup.GET("/llm-key", s.getLLMKey)
-		authGroup.DELETE("/llm-key", s.deleteLLMKey)
-		// P4: Knovis token 凭证管理（knovis Skill 读操作用）
-		authGroup.POST("/knovis-token", s.setKnovisToken)
-		authGroup.GET("/knovis-token", s.getKnovisToken)
-		authGroup.DELETE("/knovis-token", s.deleteKnovisToken)
-	}
-
-	// 工具列表
-	r.GET("/tools", s.listTools)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/auth/logout", Handler: s.adapt(s.logout)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/auth/me", Handler: s.adapt(s.me)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/auth/llm-key", Handler: s.adapt(s.setLLMKey)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/auth/llm-key", Handler: s.adapt(s.getLLMKey)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/auth/llm-key", Handler: s.adapt(s.deleteLLMKey)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/auth/knovis-token", Handler: s.adapt(s.setKnovisToken)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/auth/knovis-token", Handler: s.adapt(s.getKnovisToken)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/auth/knovis-token", Handler: s.adapt(s.deleteKnovisToken)})
 
 	// P4: WebSocket 端点（本地客户端连接，file/sandbox 工具通过此通道下发指令）
 	// 鉴权由 ws.Handler 自行处理（query token），中间件白名单已放行 /ws/*
-	r.GET("/ws/agent", s.wsHandler.HandleWS)
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/ws/agent", Handler: s.wsHandler.HandleWS})
 
-	// Session 管理（要求 X-Client-ID）
-	sessions := r.Group("/sessions")
-	{
-		sessions.POST("", s.createSession)
-		sessions.GET("", s.listSessions)
-		sessions.GET("/:id", s.getSession)
-		sessions.GET("/:id/messages", s.listSessionMessages) // 历史消息回放
-		sessions.GET("/:id/messages/summarized", s.listSummarizedMessages) // 已压缩消息列表（前端恢复用）
-		sessions.POST("/:id/messages/:mid/restore", s.restoreMessage)      // 恢复单条已压缩消息（重置 TTL）
-		sessions.PATCH("/:id", s.updateSession)              // 重命名 / 置顶
-		sessions.DELETE("/:id", s.deleteSession)
-	}
+	// Session 管理
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/sessions", Handler: s.adapt(s.createSession)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sessions", Handler: s.adapt(s.listSessions)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sessions/:id", Handler: s.adapt(s.getSession)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sessions/:id/messages", Handler: s.adapt(s.listSessionMessages)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/sessions/:id/messages/summarized", Handler: s.adapt(s.listSummarizedMessages)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/sessions/:id/messages/:mid/restore", Handler: s.adapt(s.restoreMessage)})
+	srv.AddRoute(rest.Route{Method: http.MethodPatch, Path: "/sessions/:id", Handler: s.adapt(s.updateSession)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/sessions/:id", Handler: s.adapt(s.deleteSession)})
 
 	// P2: 项目管理 + 记忆系统
-	projects := r.Group("/projects")
-	{
-		projects.POST("", s.createProject)
-		projects.GET("", s.listProjects)
-		projects.GET("/:id", s.getProject)
-		projects.PATCH("/:id", s.updateProject)
-		projects.DELETE("/:id", s.deleteProject)
-		projects.GET("/:id/sessions", s.listProjectSessions) // 项目下的 session
-		// 项目记忆 CRUD
-		projects.POST("/:id/memories", s.createMemory)
-		projects.GET("/:id/memories", s.listMemories)
-		projects.POST("/:id/memories/embed", s.embedPending)        // 手动触发批量 embed
-		projects.POST("/:id/memories/search", s.searchMemories)     // 检索测试
-		projects.GET("/:id/memories/archived", s.listArchivedMemories) // 归档记忆列表
-	}
-	// 单条记忆操作（跨项目通用）
-	r.PUT("/memory/memories/:id", s.updateMemory)
-	r.DELETE("/memory/memories/:id", s.deleteMemory)
-	r.POST("/memory/memories/:id/archive", s.archiveMemory)        // 归档单条记忆
-	r.POST("/memory/archive/:id/restore", s.restoreMemory)        // 恢复归档记忆
-	r.POST("/memory/ttl/run", s.triggerTTL)                       // 手动触发 TTL 归档（运维用）
-	r.POST("/memory/message-ttl/run", s.triggerMessageTTL)        // 手动触发消息 TTL 软删（运维用）
-	// 用户档案
-	r.GET("/memory/user-config", s.getUserConfig)
-	r.PUT("/memory/user-config", s.upsertUserConfig)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/projects", Handler: s.adapt(s.createProject)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/projects", Handler: s.adapt(s.listProjects)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/projects/:id", Handler: s.adapt(s.getProject)})
+	srv.AddRoute(rest.Route{Method: http.MethodPatch, Path: "/projects/:id", Handler: s.adapt(s.updateProject)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/projects/:id", Handler: s.adapt(s.deleteProject)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/projects/:id/sessions", Handler: s.adapt(s.listProjectSessions)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/projects/:id/memories", Handler: s.adapt(s.createMemory)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/projects/:id/memories", Handler: s.adapt(s.listMemories)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/projects/:id/memories/embed", Handler: s.adapt(s.embedPending)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/projects/:id/memories/search", Handler: s.adapt(s.searchMemories)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/projects/:id/memories/archived", Handler: s.adapt(s.listArchivedMemories)})
 
-	// 对话流（SSE）
-	r.POST("/chat/stream", s.chatStream)
+	// 单条记忆操作（跨项目通用）
+	srv.AddRoute(rest.Route{Method: http.MethodPut, Path: "/memory/memories/:id", Handler: s.adapt(s.updateMemory)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/memory/memories/:id", Handler: s.adapt(s.deleteMemory)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/memory/memories/:id/archive", Handler: s.adapt(s.archiveMemory)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/memory/archive/:id/restore", Handler: s.adapt(s.restoreMemory)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/memory/ttl/run", Handler: s.adapt(s.triggerTTL)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/memory/message-ttl/run", Handler: s.adapt(s.triggerMessageTTL)})
+
+	// 用户档案
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/memory/user-config", Handler: s.adapt(s.getUserConfig)})
+	srv.AddRoute(rest.Route{Method: http.MethodPut, Path: "/memory/user-config", Handler: s.adapt(s.upsertUserConfig)})
+
+	// 对话流（SSE）— 手动注册原始 http.HandlerFunc，保持 SSE 事件循环逻辑不变
+	// 注：go-zero rest 的 responseWriter 实现了 http.Flusher，SSE 可正常 flush
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/chat/stream", Handler: s.adapt(s.chatStream)})
 
 	// 用户回答提问
-	r.POST("/question/:question_id/answer", s.answerQuestion)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/question/:question_id/answer", Handler: s.adapt(s.answerQuestion)})
 
 	// P4: 工具执行审批（file_write/sandbox_exec 等需审批工具，前端收到 waiting_approval SSE 后调此接口）
-	r.POST("/approval/:approval_id/decide", s.decideApproval)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/approval/:approval_id/decide", Handler: s.adapt(s.decideApproval)})
 
 	// P5: RAG 文档管理 + 检索调试
-	docs := r.Group("/documents")
-	{
-		docs.POST("/upload", s.uploadDocument) // 上传 PDF(转发 doc-service)
-		docs.GET("", s.listDocuments)          // 文档列表
-		docs.DELETE("/:id", s.deleteDocument)  // 删除文档(级联)
-		docs.POST("/scan", s.scanDocuments)    // 扫描本地目录导入
-	}
-	r.POST("/rag/debug", s.ragDebug) // 检索调试(返回各路召回数 + 融合明细)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/documents/upload", Handler: s.adapt(s.uploadDocument)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/documents", Handler: s.adapt(s.listDocuments)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/documents/:id", Handler: s.adapt(s.deleteDocument)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/documents/scan", Handler: s.adapt(s.scanDocuments)})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/rag/debug", Handler: s.adapt(s.ragDebug)})
 
-	// 静态文件服务（前端页面）
-	r.Static("/static", "./static")
-	r.StaticFile("/", "./static/index.html")
+	// 静态文件服务（前端页面）— 用 rest.WithFileServer 注册（见 Start）
+	// 根路径返回 index.html
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/", Handler: func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "./static/index.html")
+	}})
 
 	log.Printf("[INFO][api] registerRoutes 路由注册完成")
 }
 
-// Run 启动 HTTP 服务
-func (s *Server) Run(port string) error {
-	log.Printf("[INFO][api] Run HTTP 启动监听 port=%s", port)
-	return s.router.Run(":" + port)
+// adapt 将 GinCompat 风格 handler 适配为 http.HandlerFunc
+func (s *Server) adapt(h func(*GinCompat)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		h(NewGinCompat(w, r))
+	}
 }

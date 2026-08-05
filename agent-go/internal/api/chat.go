@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 
-	"github.com/gin-gonic/gin"
 )
 
 // ChatRequest 对话请求
@@ -19,15 +18,15 @@ type ChatRequest struct {
 }
 
 // chatStream SSE 流式对话
-func (s *Server) chatStream(c *gin.Context) {
+func (s *Server) chatStream(c *GinCompat) {
 	var req ChatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 
 	if req.Query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query 不能为空"})
+		c.JSON(http.StatusBadRequest, H{"error": "query 不能为空"})
 		return
 	}
 
@@ -39,7 +38,7 @@ func (s *Server) chatStream(c *gin.Context) {
 
 	// 1) 用户存储的加密 LLM key（AES-256-GCM 解密）
 	if s.authService != nil && clientID != "" {
-		if stored, err := s.authService.GetLLMKey(c.Request.Context(), clientID); err == nil && stored != "" {
+		if stored, err := s.authService.GetLLMKey(c.Request().Context(), clientID); err == nil && stored != "" {
 			apiKey = stored
 			usingOwnKey = true
 		}
@@ -68,17 +67,17 @@ func (s *Server) chatStream(c *gin.Context) {
 		session, err := s.repos.Session.GetByID(req.SessionID, clientID)
 		if err != nil {
 			log.Printf("[ERROR][api] chatStream 查询 Session 失败 sessionID=%s err=%v", req.SessionID, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 Session 失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "查询 Session 失败: " + err.Error()})
 			return
 		}
 		if session == nil {
 			log.Printf("[WARN][api] chatStream Session 不存在 sessionID=%s", req.SessionID)
-			c.JSON(http.StatusNotFound, gin.H{"error": "Session 不存在"})
+			c.JSON(http.StatusNotFound, H{"error": "Session 不存在"})
 			return
 		}
 		if session.OwnerID != clientID {
 			log.Printf("[WARN][api] chatStream 越权访问 clientID=%s sessionID=%s", clientID, req.SessionID)
-			c.JSON(http.StatusForbidden, gin.H{"error": "无权操作该 Session"})
+			c.JSON(http.StatusForbidden, H{"error": "无权操作该 Session"})
 			return
 		}
 		projectID = session.ProjectID
@@ -87,10 +86,10 @@ func (s *Server) chatStream(c *gin.Context) {
 	// 限流检查：用户自带 key 不限；使用系统兜底 key 按免费额度限流
 	// 在 SSE 头设置之前执行，超限时返回标准 JSON 429 响应
 	if !usingOwnKey && clientID != "" && s.authService != nil {
-		remaining, err := s.authService.CheckRateLimit(c.Request.Context(), clientID, usingOwnKey)
+		remaining, err := s.authService.CheckRateLimit(c.Request().Context(), clientID, usingOwnKey)
 		if err != nil {
 			log.Printf("[WARN][api] 限流拦截 userID=%s: %v", clientID, err)
-			c.JSON(http.StatusTooManyRequests, gin.H{
+			c.JSON(http.StatusTooManyRequests, H{
 				"error":       err.Error(),
 				"retry_after": "次日凌晨 UTC 重置",
 			})
@@ -108,19 +107,19 @@ func (s *Server) chatStream(c *gin.Context) {
 	c.Header("X-Accel-Buffering", "no") // Nginx 不缓冲
 
 	// 创建可取消的 context
-	ctx, cancel := context.WithCancel(c.Request.Context())
+	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
 
 	// flusher 用于实时推送 SSE
-	flusher, ok := c.Writer.(http.Flusher)
+	flusher, ok := c.Writer().(http.Flusher)
 	if !ok {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Streaming unsupported"})
+		c.JSON(http.StatusInternalServerError, H{"error": "Streaming unsupported"})
 		return
 	}
 
 	// 显式写入状态码 + 初始注释行，触发响应头立即发送（避免客户端等待头超时）
-	c.Writer.WriteHeader(http.StatusOK)
-	fmt.Fprintf(c.Writer, ": connected\n\n")
+	c.Writer().WriteHeader(http.StatusOK)
+	fmt.Fprintf(c.Writer(), ": connected\n\n")
 	flusher.Flush()
 	log.Printf("[DEBUG][api] SSE 响应头已发送，连接已建立")
 
@@ -134,7 +133,7 @@ func (s *Server) chatStream(c *gin.Context) {
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(c.Writer, "data: %s\n\n", data)
+		fmt.Fprintf(c.Writer(), "data: %s\n\n", data)
 		flusher.Flush()
 		log.Printf("[DEBUG][api] SSE 已写入并 flush type=%s bytes=%d", event.Type, len(data))
 	}

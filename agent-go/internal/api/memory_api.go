@@ -8,7 +8,6 @@ import (
 
 	"agent-go/internal/storage"
 
-	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
@@ -34,19 +33,19 @@ type UpdateProjectRequest struct {
 }
 
 // createProject POST /projects
-func (s *Server) createProject(c *gin.Context) {
+func (s *Server) createProject(c *GinCompat) {
 	ownerID := c.GetString("client_id")
 	if ownerID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 	var req CreateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	if req.Name == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "name 不能为空"})
+		c.JSON(http.StatusBadRequest, H{"error": "name 不能为空"})
 		return
 	}
 	now := time.Now().UTC()
@@ -64,7 +63,7 @@ func (s *Server) createProject(c *gin.Context) {
 	}
 	if err := s.repos.Project.Create(p); err != nil {
 		log.Printf("[ERROR][api] createProject 失败 ownerID=%s name=%s err=%v", ownerID, req.Name, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建项目失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "创建项目失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] createProject 成功 id=%s name=%s ownerID=%s", p.ID, p.Name, ownerID)
@@ -73,62 +72,62 @@ func (s *Server) createProject(c *gin.Context) {
 }
 
 // listProjects GET /projects
-func (s *Server) listProjects(c *gin.Context) {
+func (s *Server) listProjects(c *GinCompat) {
 	ownerID := c.GetString("client_id")
 	if ownerID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 	projects, err := s.repos.Project.ListByOwner(ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询项目失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询项目失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"projects": projects, "total": len(projects)})
+	c.JSON(http.StatusOK, H{"projects": projects, "total": len(projects)})
 }
 
 // getProject GET /projects/:id
-func (s *Server) getProject(c *gin.Context) {
+func (s *Server) getProject(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	p, err := s.repos.Project.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if p == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "项目不存在"})
 		return
 	}
 	if ownerID != "" && p.OwnerID != ownerID {
 		log.Printf("[WARN][api] getProject 越权访问 clientID=%s projectID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权访问该项目"})
+		c.JSON(http.StatusForbidden, H{"error": "无权访问该项目"})
 		return
 	}
 	c.JSON(http.StatusOK, p)
 }
 
 // updateProject PATCH /projects/:id
-func (s *Server) updateProject(c *gin.Context) {
+func (s *Server) updateProject(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	p, err := s.repos.Project.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if p == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "项目不存在"})
 		return
 	}
 	if ownerID != "" && p.OwnerID != ownerID {
 		log.Printf("[WARN][api] updateProject 越权访问 clientID=%s projectID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权修改该项目"})
+		c.JSON(http.StatusForbidden, H{"error": "无权修改该项目"})
 		return
 	}
 	var req UpdateProjectRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	fields := map[string]any{}
@@ -152,13 +151,13 @@ func (s *Server) updateProject(c *gin.Context) {
 	}
 	if len(fields) > 0 {
 		if err := s.repos.Project.UpdateFields(id, ownerID, fields); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "更新失败: " + err.Error()})
 			return
 		}
 		log.Printf("[INFO][api] updateProject 成功 id=%s fields=%v", id, fields)
 		// 失效缓存
 		if s.memorySvc != nil {
-			s.memorySvc.InvalidateProjectCache(c.Request.Context(), id)
+			s.memorySvc.InvalidateProjectCache(c.Request().Context(), id)
 		}
 	}
 	updated, _ := s.repos.Project.GetByID(id, ownerID)
@@ -169,21 +168,21 @@ func (s *Server) updateProject(c *gin.Context) {
 // deleteProject DELETE /projects/:id
 // 事务级联软删：项目 + 子 session + 关联 messages + 项目记忆（3步原子）
 // Chroma collection 删除与缓存失效在事务外执行（失败不阻断，最终一致）
-func (s *Server) deleteProject(c *gin.Context) {
+func (s *Server) deleteProject(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	p, err := s.repos.Project.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if p == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "项目不存在"})
 		return
 	}
 	if ownerID != "" && p.OwnerID != ownerID {
 		log.Printf("[WARN][api] deleteProject 越权访问 clientID=%s projectID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除该项目"})
+		c.JSON(http.StatusForbidden, H{"error": "无权删除该项目"})
 		return
 	}
 
@@ -215,21 +214,21 @@ func (s *Server) deleteProject(c *gin.Context) {
 		return nil
 	}); err != nil {
 		log.Printf("[ERROR][api] deleteProject 级联删除失败 projectID=%s err=%v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "级联删除失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "级联删除失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] deleteProject 级联删除成功 id=%s", id)
 
 	// Chroma collection 删除（事务外，失败不阻断，仅 log）
 	if s.memorySvc != nil {
-		if err := s.memorySvc.GetClient().DeleteCollection(c.Request.Context(), id); err != nil {
+		if err := s.memorySvc.GetClient().DeleteCollection(c.Request().Context(), id); err != nil {
 			// 不阻断删除流程，向量库残留可由后续 GC 清理
 			log.Printf("[memory] 删除 Chroma collection 失败（项目已软删，向量残留）: %v", err)
 		}
-		s.memorySvc.InvalidateProjectCache(c.Request.Context(), id)
+		s.memorySvc.InvalidateProjectCache(c.Request().Context(), id)
 	}
 	s.auditLogger.Log(CurrentUserID(c), "delete", "project", id, c.ClientIP(), c.GetString(CtxAuthType), nil)
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": id})
+	c.JSON(http.StatusOK, H{"status": "ok", "id": id})
 }
 
 // ==================== 用户档案 ====================
@@ -243,15 +242,15 @@ type UpsertUserConfigRequest struct {
 }
 
 // upsertUserConfig PUT /memory/user-config
-func (s *Server) upsertUserConfig(c *gin.Context) {
+func (s *Server) upsertUserConfig(c *GinCompat) {
 	userID := c.GetString("client_id")
 	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 	var req UpsertUserConfigRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	uc := &storage.UserConfig{
@@ -263,35 +262,35 @@ func (s *Server) upsertUserConfig(c *gin.Context) {
 	}
 	if err := s.repos.UserConfig.Upsert(uc); err != nil {
 		log.Printf("[ERROR][api] upsertUserConfig 失败 userID=%s err=%v", userID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "保存失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "保存失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] upsertUserConfig 成功 userID=%s", userID)
 	// 失效缓存
 	if s.repos.Cache != nil {
-		_ = s.repos.Cache.Del(c.Request.Context(), storage.UserConfigCacheKey(userID))
+		_ = s.repos.Cache.Del(c.Request().Context(), storage.UserConfigCacheKey(userID))
 	}
 	s.auditLogger.Log(CurrentUserID(c), "update", "user_config", userID, c.ClientIP(), c.GetString(CtxAuthType), nil)
 	c.JSON(http.StatusOK, uc)
 }
 
 // getUserConfig GET /memory/user-config
-func (s *Server) getUserConfig(c *gin.Context) {
+func (s *Server) getUserConfig(c *GinCompat) {
 	userID := c.GetString("client_id")
 	if userID == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "缺少 X-Client-ID"})
+		c.JSON(http.StatusBadRequest, H{"error": "缺少 X-Client-ID"})
 		return
 	}
 	uc, err := s.repos.UserConfig.GetByUserID(userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if uc == nil {
-		c.JSON(http.StatusOK, gin.H{"user_config": nil})
+		c.JSON(http.StatusOK, H{"user_config": nil})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"user_config": uc})
+	c.JSON(http.StatusOK, H{"user_config": uc})
 }
 
 // ==================== 记忆 CRUD ====================
@@ -305,7 +304,7 @@ type CreateMemoryRequest struct {
 }
 
 // createMemory POST /projects/:id/memories
-func (s *Server) createMemory(c *gin.Context) {
+func (s *Server) createMemory(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	// 校验项目归属
@@ -314,11 +313,11 @@ func (s *Server) createMemory(c *gin.Context) {
 	}
 	var req CreateMemoryRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	if req.Content == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "content 不能为空"})
+		c.JSON(http.StatusBadRequest, H{"error": "content 不能为空"})
 		return
 	}
 	source := req.Source
@@ -341,17 +340,17 @@ func (s *Server) createMemory(c *gin.Context) {
 	}
 	if err := s.repos.Memory.Create(m); err != nil {
 		log.Printf("[ERROR][api] createMemory 失败 projectID=%s ownerID=%s err=%v", projectID, ownerID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "创建失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "创建失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] createMemory 成功 id=%s projectID=%s", m.ID, projectID)
-	s.memorySvc.InvalidateProjectCache(c.Request.Context(), projectID)
+	s.memorySvc.InvalidateProjectCache(c.Request().Context(), projectID)
 	s.auditLogger.Log(CurrentUserID(c), "create", "memory", m.ID, c.ClientIP(), c.GetString(CtxAuthType), map[string]any{"project_id": m.ProjectID})
 	c.JSON(http.StatusCreated, m)
 }
 
 // listMemories GET /projects/:id/memories?limit=
-func (s *Server) listMemories(c *gin.Context) {
+func (s *Server) listMemories(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	if !s.checkProjectOwner(c, projectID, ownerID) {
@@ -374,28 +373,28 @@ func (s *Server) listMemories(c *gin.Context) {
 	}
 	memories, err := s.repos.Memory.ListByProject(projectID, ownerID, limit)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"memories": memories, "total": len(memories)})
+	c.JSON(http.StatusOK, H{"memories": memories, "total": len(memories)})
 }
 
 // updateMemory PUT /memory/memories/:id
-func (s *Server) updateMemory(c *gin.Context) {
+func (s *Server) updateMemory(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	m, err := s.repos.Memory.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if m == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "记忆不存在"})
 		return
 	}
 	if ownerID != "" && m.OwnerID != ownerID {
 		log.Printf("[WARN][api] updateMemory 越权访问 clientID=%s memoryID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权修改该记忆"})
+		c.JSON(http.StatusForbidden, H{"error": "无权修改该记忆"})
 		return
 	}
 	var req struct {
@@ -403,30 +402,30 @@ func (s *Server) updateMemory(c *gin.Context) {
 		Importance *int    `json:"importance,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	if req.Content != nil {
 		if err := s.repos.Memory.UpdateContent(id, ownerID, *req.Content); err != nil {
 			log.Printf("[ERROR][api] updateMemory 更新内容失败 id=%s err=%v", id, err)
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "更新失败: " + err.Error()})
+			c.JSON(http.StatusInternalServerError, H{"error": "更新失败: " + err.Error()})
 			return
 		}
 		log.Printf("[INFO][api] updateMemory 成功 id=%s", id)
 		// content 改动后需重新 embed：删除旧向量 + 标记 pending（下次达阈值时重新生成）
 		if s.memorySvc != nil {
-			_, _ = s.memorySvc.GetClient().Delete(c.Request.Context(), m.ProjectID, []string{id})
+			_, _ = s.memorySvc.GetClient().Delete(c.Request().Context(), m.ProjectID, []string{id})
 		}
 		_ = s.repos.Memory.UpdateFields(id, ownerID, map[string]any{"embedding_status": "pending"})
 		// 异步检查 embed 阈值，达阈值则批量重新 embed
 		if s.memorySvc != nil {
-			s.memorySvc.MaybeEmbedPending(c.Request.Context(), m.ProjectID, ownerID)
+			s.memorySvc.MaybeEmbedPending(c.Request().Context(), m.ProjectID, ownerID)
 		}
 	}
 	if req.Importance != nil {
 		_ = s.repos.Memory.UpdateFields(id, ownerID, map[string]any{"importance": *req.Importance})
 	}
-	s.memorySvc.InvalidateProjectCache(c.Request.Context(), m.ProjectID)
+	s.memorySvc.InvalidateProjectCache(c.Request().Context(), m.ProjectID)
 	updated, _ := s.repos.Memory.GetByID(id, ownerID)
 	detail := map[string]any{}
 	if req.Content != nil {
@@ -440,65 +439,65 @@ func (s *Server) updateMemory(c *gin.Context) {
 }
 
 // deleteMemory DELETE /memory/memories/:id
-func (s *Server) deleteMemory(c *gin.Context) {
+func (s *Server) deleteMemory(c *GinCompat) {
 	id := c.Param("id")
 	ownerID := c.GetString("client_id")
 	m, err := s.repos.Memory.GetByID(id, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
 	if m == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "记忆不存在"})
 		return
 	}
 	if ownerID != "" && m.OwnerID != ownerID {
 		log.Printf("[WARN][api] deleteMemory 越权访问 clientID=%s memoryID=%s", ownerID, id)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权删除该记忆"})
+		c.JSON(http.StatusForbidden, H{"error": "无权删除该记忆"})
 		return
 	}
 	if err := s.repos.Memory.SoftDelete(id, ownerID); err != nil {
 		log.Printf("[ERROR][api] deleteMemory 软删失败 id=%s err=%v", id, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "删除失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "删除失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] deleteMemory 软删成功 id=%s", id)
 	// 删除 Chroma 向量
 	if s.memorySvc != nil {
-		_, _ = s.memorySvc.GetClient().Delete(c.Request.Context(), m.ProjectID, []string{id})
-		s.memorySvc.InvalidateProjectCache(c.Request.Context(), m.ProjectID)
+		_, _ = s.memorySvc.GetClient().Delete(c.Request().Context(), m.ProjectID, []string{id})
+		s.memorySvc.InvalidateProjectCache(c.Request().Context(), m.ProjectID)
 	}
 	s.auditLogger.Log(CurrentUserID(c), "delete", "memory", id, c.ClientIP(), c.GetString(CtxAuthType), nil)
-	c.JSON(http.StatusOK, gin.H{"status": "ok", "id": id})
+	c.JSON(http.StatusOK, H{"status": "ok", "id": id})
 }
 
 // ==================== Embed 与检索（手动触发/测试）====================
 
 // embedPending POST /projects/:id/memories/embed
 // 手动触发批量 embed pending 记忆
-func (s *Server) embedPending(c *gin.Context) {
+func (s *Server) embedPending(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	if !s.checkProjectOwner(c, projectID, ownerID) {
 		return
 	}
 	if s.memorySvc == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "记忆服务未启用"})
+		c.JSON(http.StatusServiceUnavailable, H{"error": "记忆服务未启用"})
 		return
 	}
-	n, err := s.memorySvc.EmbedPendingMemories(c.Request.Context(), projectID, ownerID)
+	n, err := s.memorySvc.EmbedPendingMemories(c.Request().Context(), projectID, ownerID)
 	if err != nil {
 		log.Printf("[ERROR][api] embedPending 失败 projectID=%s embedded=%d err=%v", projectID, n, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "embedding 失败: " + err.Error(), "embedded": n})
+		c.JSON(http.StatusInternalServerError, H{"error": "embedding 失败: " + err.Error(), "embedded": n})
 		return
 	}
 	log.Printf("[INFO][api] embedPending 成功 projectID=%s count=%d", projectID, n)
-	c.JSON(http.StatusOK, gin.H{"embedded": n})
+	c.JSON(http.StatusOK, H{"embedded": n})
 }
 
 // searchMemories POST /projects/:id/memories/search
 // 测试检索（前端调试/设置页预览用）
-func (s *Server) searchMemories(c *gin.Context) {
+func (s *Server) searchMemories(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	if !s.checkProjectOwner(c, projectID, ownerID) {
@@ -509,25 +508,25 @@ func (s *Server) searchMemories(c *gin.Context) {
 		TopK  int    `json:"top_k,omitempty"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 	if req.Query == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "query 不能为空"})
+		c.JSON(http.StatusBadRequest, H{"error": "query 不能为空"})
 		return
 	}
 	if s.memorySvc == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "记忆服务未启用"})
+		c.JSON(http.StatusServiceUnavailable, H{"error": "记忆服务未启用"})
 		return
 	}
-	resp, err := s.memorySvc.GetClient().SearchWithStats(c.Request.Context(), projectID, req.Query, req.TopK)
+	resp, err := s.memorySvc.GetClient().SearchWithStats(c.Request().Context(), projectID, req.Query, req.TopK)
 	if err != nil {
 		log.Printf("[ERROR][api] searchMemories 失败 projectID=%s err=%v", projectID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "检索失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "检索失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] searchMemories 成功 projectID=%s bm25_count=%d rag_count=%d", projectID, resp.BM25Count, resp.RAGCount)
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"results":     resp.Results,
 		"total":       len(resp.Results),
 		"bm25_count":  resp.BM25Count,
@@ -541,23 +540,23 @@ func (s *Server) searchMemories(c *gin.Context) {
 // 归档单条记忆：事务内迁移到 agent_memory_archive + 硬删主表；事务外删 Chroma 向量
 // 归档后 30 天内可恢复
 // 注：路由放在 /memory/memories/:id 下（与 update/delete 同层级），避免与 /projects/:id/memories/embed 等静态段冲突
-func (s *Server) archiveMemory(c *gin.Context) {
+func (s *Server) archiveMemory(c *GinCompat) {
 	memID := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	// 查记忆（校验归属）
 	m, err := s.repos.Memory.GetByID(memID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询记忆失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询记忆失败: " + err.Error()})
 		return
 	}
 	if m == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "记忆不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "记忆不存在"})
 		return
 	}
 	if ownerID != "" && m.OwnerID != ownerID {
 		log.Printf("[WARN][api] archiveMemory 越权访问 clientID=%s memoryID=%s", ownerID, memID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权归档该记忆"})
+		c.JSON(http.StatusForbidden, H{"error": "无权归档该记忆"})
 		return
 	}
 	projectID := m.ProjectID
@@ -586,51 +585,51 @@ func (s *Server) archiveMemory(c *gin.Context) {
 		return nil
 	}); err != nil {
 		log.Printf("[ERROR][api] archiveMemory 归档事务失败 id=%s err=%v", memID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "归档失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "归档失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] archiveMemory 归档事务成功 id=%s", memID)
 
 	// 事务外：删 Chroma 向量（失败不阻断，仅 log）
 	if s.memorySvc != nil {
-		if _, err := s.memorySvc.GetClient().Delete(c.Request.Context(), projectID, []string{memID}); err != nil {
+		if _, err := s.memorySvc.GetClient().Delete(c.Request().Context(), projectID, []string{memID}); err != nil {
 			log.Printf("[memory] 归档后删除 Chroma 向量失败（记忆已归档，向量残留）: %v", err)
 		}
-		s.memorySvc.InvalidateProjectCache(c.Request.Context(), projectID)
+		s.memorySvc.InvalidateProjectCache(c.Request().Context(), projectID)
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "archived", "id": memID, "restore_expires_at": archive.RestoreExpiresAt})
+	c.JSON(http.StatusOK, H{"status": "archived", "id": memID, "restore_expires_at": archive.RestoreExpiresAt})
 }
 
 // restoreMemory POST /memory/archive/:id/restore
 // 恢复归档记忆（30 天内有效）：写回主表（embedding_status=pending）+ 标记已恢复
-func (s *Server) restoreMemory(c *gin.Context) {
+func (s *Server) restoreMemory(c *GinCompat) {
 	archiveID := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	// 查归档记录
 	a, err := s.repos.MemoryArchive.GetByID(archiveID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询归档记录失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询归档记录失败: " + err.Error()})
 		return
 	}
 	if a == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "归档记录不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "归档记录不存在"})
 		return
 	}
 	// 归属校验
 	if ownerID != "" && a.OriginalOwnerID != ownerID {
 		log.Printf("[WARN][api] restoreMemory 越权访问 clientID=%s archiveID=%s", ownerID, archiveID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权恢复该记忆"})
+		c.JSON(http.StatusForbidden, H{"error": "无权恢复该记忆"})
 		return
 	}
 	// 已恢复
 	if a.Restored {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "该记忆已恢复"})
+		c.JSON(http.StatusBadRequest, H{"error": "该记忆已恢复"})
 		return
 	}
 	// 已过期
 	if time.Now().UTC().After(a.RestoreExpiresAt) {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "恢复期限已过（归档后 30 天内可恢复）"})
+		c.JSON(http.StatusBadRequest, H{"error": "恢复期限已过（归档后 30 天内可恢复）"})
 		return
 	}
 
@@ -660,22 +659,22 @@ func (s *Server) restoreMemory(c *gin.Context) {
 		return nil
 	}); err != nil {
 		log.Printf("[ERROR][api] restoreMemory 恢复事务失败 id=%s err=%v", archiveID, err)
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "恢复失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] restoreMemory 恢复事务成功 id=%s", archiveID)
 
 	// 恢复后触发重新 embed
 	if s.memorySvc != nil {
-		s.memorySvc.MaybeEmbedPending(c.Request.Context(), a.OriginalProjectID, ownerID)
-		s.memorySvc.InvalidateProjectCache(c.Request.Context(), a.OriginalProjectID)
+		s.memorySvc.MaybeEmbedPending(c.Request().Context(), a.OriginalProjectID, ownerID)
+		s.memorySvc.InvalidateProjectCache(c.Request().Context(), a.OriginalProjectID)
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "restored", "id": archiveID, "memory": m})
+	c.JSON(http.StatusOK, H{"status": "restored", "id": archiveID, "memory": m})
 }
 
 // listArchivedMemories GET /projects/:id/memories/archived
 // 列出某项目的归档记忆（含已恢复）
-func (s *Server) listArchivedMemories(c *gin.Context) {
+func (s *Server) listArchivedMemories(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	if !s.checkProjectOwner(c, projectID, ownerID) {
@@ -683,31 +682,31 @@ func (s *Server) listArchivedMemories(c *gin.Context) {
 	}
 	archives, err := s.repos.MemoryArchive.ListByProject(projectID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询归档记忆失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询归档记忆失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"archives": archives, "total": len(archives)})
+	c.JSON(http.StatusOK, H{"archives": archives, "total": len(archives)})
 }
 
 // triggerTTL POST /memory/ttl/run
 // 手动触发一次 TTL 归档任务（运维用，不影响定时调度）
 // 归档超14周未访问的记忆 + 物理删除超30天未恢复的归档记录
-func (s *Server) triggerTTL(c *gin.Context) {
+func (s *Server) triggerTTL(c *GinCompat) {
 	if s.ttlScheduler == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "TTL 调度器未初始化"})
+		c.JSON(http.StatusServiceUnavailable, H{"error": "TTL 调度器未初始化"})
 		return
 	}
-	archived, failed, cleaned, running := s.ttlScheduler.RunOnce(c.Request.Context())
+	archived, failed, cleaned, running := s.ttlScheduler.RunOnce(c.Request().Context())
 	if running {
 		log.Printf("[INFO][api] triggerTTL 任务正在执行中，拒绝并发触发")
-		c.JSON(http.StatusConflict, gin.H{
+		c.JSON(http.StatusConflict, H{
 			"status":  "running",
 			"message": "TTL 任务正在执行中（定时任务或手动触发），请稍后重试",
 		})
 		return
 	}
 	log.Printf("[INFO][api] triggerTTL 完成 archived=%d failed=%d cleaned=%d", archived, failed, cleaned)
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"status":         "done",
 		"archived_count": archived,
 		"failed_count":   failed,
@@ -723,23 +722,23 @@ func (s *Server) triggerTTL(c *gin.Context) {
 // listSummarizedMessages GET /sessions/:id/messages/summarized
 // 查询某 Session 已被压缩的消息（供前端展示 + 手动恢复用）
 // 分页参数：?limit=20&offset=0
-func (s *Server) listSummarizedMessages(c *gin.Context) {
+func (s *Server) listSummarizedMessages(c *GinCompat) {
 	sessionID := c.Param("id")
 	ownerID := c.GetString("client_id")
 
 	// owner 校验：确认 session 属于当前用户
 	session, err := s.repos.Session.GetByID(sessionID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 session 失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询 session 失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "session 不存在"})
 		return
 	}
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] listSummarizedMessages 越权访问 clientID=%s sessionID=%s", ownerID, sessionID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权操作该 session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权操作该 session"})
 		return
 	}
 
@@ -758,10 +757,10 @@ func (s *Server) listSummarizedMessages(c *gin.Context) {
 
 	msgs, err := s.repos.Message.GetSummarizedBySessionID(sessionID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询已压缩消息失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询已压缩消息失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"messages": msgs,
 		"total":    len(msgs),
 		"limit":     limit,
@@ -773,7 +772,7 @@ func (s *Server) listSummarizedMessages(c *gin.Context) {
 // 恢复单条已压缩消息（重置 restored_at = now，相当于再给 7 天 TTL 窗口期）
 // 注意：恢复不会把消息加回 loadHistory（summarized 仍为 true），仅用于前端展示 + TTL 延期
 // 用户若想真正把消息加回上下文，需要人工合并摘要或重新发起对话
-func (s *Server) restoreMessage(c *gin.Context) {
+func (s *Server) restoreMessage(c *GinCompat) {
 	sessionID := c.Param("id")
 	msgIDStr := c.Param("mid")
 	ownerID := c.GetString("client_id")
@@ -781,31 +780,31 @@ func (s *Server) restoreMessage(c *gin.Context) {
 	// owner 校验
 	session, err := s.repos.Session.GetByID(sessionID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询 session 失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询 session 失败: " + err.Error()})
 		return
 	}
 	if session == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "session 不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "session 不存在"})
 		return
 	}
 	if ownerID != "" && session.OwnerID != ownerID {
 		log.Printf("[WARN][api] restoreMessage 越权访问 clientID=%s sessionID=%s", ownerID, sessionID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权操作该 session"})
+		c.JSON(http.StatusForbidden, H{"error": "无权操作该 session"})
 		return
 	}
 
 	msgID, err := strconv.ParseUint(msgIDStr, 10, 64)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "消息 ID 格式错误"})
+		c.JSON(http.StatusBadRequest, H{"error": "消息 ID 格式错误"})
 		return
 	}
 
 	if err := s.repos.Message.RestoreMessage(uint(msgID)); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "恢复消息失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "恢复消息失败: " + err.Error()})
 		return
 	}
 	log.Printf("[INFO][api] 恢复已压缩消息 sessionID=%s msgID=%d", sessionID, msgID)
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"status":  "restored",
 		"msg_id":  msgID,
 		"message": "已重置 TTL，再给 7 天窗口期（注意：消息不会加回上下文，仅用于展示和延期）",
@@ -815,22 +814,22 @@ func (s *Server) restoreMessage(c *gin.Context) {
 // triggerMessageTTL POST /memory/message-ttl/run
 // 手动触发一次消息 TTL 软删任务（运维用，不影响定时调度）
 // 软删已压缩且超 7 天未恢复的消息
-func (s *Server) triggerMessageTTL(c *gin.Context) {
+func (s *Server) triggerMessageTTL(c *GinCompat) {
 	if s.msgTtlScheduler == nil {
-		c.JSON(http.StatusServiceUnavailable, gin.H{"error": "消息 TTL 调度器未初始化"})
+		c.JSON(http.StatusServiceUnavailable, H{"error": "消息 TTL 调度器未初始化"})
 		return
 	}
-	deleted, running := s.msgTtlScheduler.RunOnce(c.Request.Context())
+	deleted, running := s.msgTtlScheduler.RunOnce(c.Request().Context())
 	if running {
 		log.Printf("[INFO][api] triggerMessageTTL 任务正在执行中，拒绝并发触发")
-		c.JSON(http.StatusConflict, gin.H{
+		c.JSON(http.StatusConflict, H{
 			"status":  "running",
 			"message": "消息 TTL 任务正在执行中（定时任务或手动触发），请稍后重试",
 		})
 		return
 	}
 	log.Printf("[INFO][api] triggerMessageTTL 完成 deleted=%d", deleted)
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"status":        "done",
 		"deleted_count": deleted,
 		"ttl_days":      7,
@@ -841,7 +840,7 @@ func (s *Server) triggerMessageTTL(c *gin.Context) {
 // ==================== 子项目 session 列表 ====================
 
 // listProjectSessions GET /projects/:id/sessions
-func (s *Server) listProjectSessions(c *gin.Context) {
+func (s *Server) listProjectSessions(c *GinCompat) {
 	projectID := c.Param("id")
 	ownerID := c.GetString("client_id")
 	if !s.checkProjectOwner(c, projectID, ownerID) {
@@ -853,28 +852,28 @@ func (s *Server) listProjectSessions(c *gin.Context) {
 		Order("pinned DESC, last_active_at DESC").
 		Find(&sessions).Error
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询失败: " + err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"sessions": sessions, "total": len(sessions)})
+	c.JSON(http.StatusOK, H{"sessions": sessions, "total": len(sessions)})
 }
 
 // ==================== 工具函数 ====================
 
 // checkProjectOwner 校验项目归属，失败时已写入响应；返回 false 表示校验失败
-func (s *Server) checkProjectOwner(c *gin.Context, projectID, ownerID string) bool {
+func (s *Server) checkProjectOwner(c *GinCompat, projectID, ownerID string) bool {
 	p, err := s.repos.Project.GetByID(projectID, ownerID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "查询项目失败: " + err.Error()})
+		c.JSON(http.StatusInternalServerError, H{"error": "查询项目失败: " + err.Error()})
 		return false
 	}
 	if p == nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "项目不存在"})
+		c.JSON(http.StatusNotFound, H{"error": "项目不存在"})
 		return false
 	}
 	if ownerID != "" && p.OwnerID != ownerID {
 		log.Printf("[WARN][api] checkProjectOwner 越权访问 clientID=%s projectID=%s", ownerID, projectID)
-		c.JSON(http.StatusForbidden, gin.H{"error": "无权操作该项目"})
+		c.JSON(http.StatusForbidden, H{"error": "无权操作该项目"})
 		return false
 	}
 	return true

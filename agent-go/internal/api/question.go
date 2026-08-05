@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"agent-go/internal/tools"
-	"github.com/gin-gonic/gin"
 )
 
 // AnswerRequest 用户回答提问
@@ -15,12 +14,12 @@ type AnswerRequest struct {
 }
 
 // answerQuestion 用户回答 ask_user 的提问
-func (s *Server) answerQuestion(c *gin.Context) {
+func (s *Server) answerQuestion(c *GinCompat) {
 	questionID := c.Param("question_id")
 
 	var req AnswerRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 
@@ -47,13 +46,13 @@ func (s *Server) answerQuestion(c *gin.Context) {
 	}
 
 	if ok := s.questionMgr.Submit(questionID, answer); !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "问题不存在或已过期", "question_id": questionID})
+		c.JSON(http.StatusNotFound, H{"error": "问题不存在或已过期", "question_id": questionID})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"status": "ok",
-		"answer": gin.H{
+		"answer": H{
 			"reply":          reply,
 			"selected_labels": req.SelectedLabels,
 			"free_text":       req.FreeText,

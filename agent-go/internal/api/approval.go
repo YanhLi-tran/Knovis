@@ -4,7 +4,6 @@ import (
 	"net/http"
 
 	"agent-go/internal/tools"
-	"github.com/gin-gonic/gin"
 )
 
 // ApprovalDecisionRequest 用户审批决定请求体
@@ -19,12 +18,12 @@ type ApprovalDecisionRequest struct {
 // 流程：前端收到 SSE waiting_approval 事件 → 弹框确认 → 调此接口 →
 //
 //	ApprovalManager.Submit 唤醒 OTACO 循环中等待的 requestApproval → 执行或跳过
-func (s *Server) decideApproval(c *gin.Context) {
+func (s *Server) decideApproval(c *GinCompat) {
 	approvalID := c.Param("approval_id")
 
 	var req ApprovalDecisionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请求格式错误: " + err.Error()})
+		c.JSON(http.StatusBadRequest, H{"error": "请求格式错误: " + err.Error()})
 		return
 	}
 
@@ -35,7 +34,7 @@ func (s *Server) decideApproval(c *gin.Context) {
 	}
 
 	if ok := s.approvalMgr.Submit(approvalID, decision); !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "审批不存在或已过期", "approval_id": approvalID})
+		c.JSON(http.StatusNotFound, H{"error": "审批不存在或已过期", "approval_id": approvalID})
 		return
 	}
 
@@ -47,9 +46,9 @@ func (s *Server) decideApproval(c *gin.Context) {
 		action = "deny"
 	}
 	s.auditLogger.Log(userID, action, "tool", approvalID, c.ClientIP(), authType,
-		gin.H{"reason": req.Reason})
+		H{"reason": req.Reason})
 
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, H{
 		"status":      "ok",
 		"approval_id": approvalID,
 		"approved":    req.Approved,
