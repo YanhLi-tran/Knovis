@@ -25,8 +25,7 @@ func BuildKBListDocs(docClient *rag.DocClient) skill.ToolBuilder {
 			Type: "function",
 			Function: llm.ToolFunction{
 				Name:        "kb_list_docs",
-				Description: "列出企业知识库中的文档（可按公司 company_code、状态 status 过滤），返回 doc_id 等元信息。用于确定总结范围：先查看有哪些文档，再按公司/指定文档总结；检索时把得到的 doc_id 传给 rag_search 的 doc_ids 参数以限定范围。",
-				Parameters: map[string]any{
+				Description: "列出企业知识库中的文档（可按公司 company_code、状态 status 过滤），返回 doc_id 等元信息。用于确定总结/对比范围：先查看有哪些文档，再按公司/指定文档总结或对比；多公司对比时分别按 company_code 列出各公司文档；检索时把得到的 doc_id 传给 rag_search 的 doc_ids 参数以限定范围。",				Parameters: map[string]any{
 					"type": "object",
 					"properties": map[string]any{
 						"company_code": map[string]any{
@@ -42,7 +41,8 @@ func BuildKBListDocs(docClient *rag.DocClient) skill.ToolBuilder {
 			},
 		}, func(ctx context.Context, args map[string]any) (string, error) {
 			companyCode, _ := args["company_code"].(string)
-			status := "completed"
+			// 默认只列处理完成的文档：数据库状态为 ready（非 completed）
+			status := "ready"
 			if s, ok := args["status"].(string); ok && s != "" {
 				status = s
 			}
