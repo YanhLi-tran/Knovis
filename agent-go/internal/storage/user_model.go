@@ -18,7 +18,7 @@ type User struct {
 	LLMKeyVersion        int       `gorm:"default:1;comment:加密密钥版本（轮换用）" json:"llm_key_version"`
 	KnovisTokenEncrypted []byte    `gorm:"column:knovis_token_encrypted;type:varbinary(512);comment:用户 Knovis token 密文（AES-256-GCM）" json:"-"`
 	KnovisTokenVersion   int       `gorm:"column:knovis_token_version;default:1;comment:Knovis token 加密密钥版本" json:"-"`
-	RateQuotaPerDay      int       `gorm:"default:10;comment:免费额度：每天对话次数（自带 key 不限）" json:"rate_quota_per_day"`
+	RateQuotaPerDay      int       `gorm:"default:5;comment:免费额度：每天对话次数（自带 key 不限）" json:"rate_quota_per_day"`
 	CreatedAt            time.Time `gorm:"comment:创建时间" json:"created_at"`
 	UpdatedAt            time.Time `gorm:"comment:更新时间" json:"updated_at"`
 }
@@ -37,9 +37,9 @@ func NewUserRepository(db *gorm.DB) *UserRepository {
 }
 
 // EnsureCredential 确保用户凭证记录存在（Lazy upsert：Knovis 用户首次使用 Agent 时按需创建）
-// 不存在则创建一行（默认免费额度 10/天）；存在则幂等返回
+// 不存在则创建一行（默认免费额度 5/天）；存在则幂等返回
 func (r *UserRepository) EnsureCredential(id string) error {
-	cred := &User{ID: id, RateQuotaPerDay: 10}
+	cred := &User{ID: id, RateQuotaPerDay: 5}
 	if err := r.db.Where("id = ?", id).FirstOrCreate(cred).Error; err != nil {
 		return err
 	}

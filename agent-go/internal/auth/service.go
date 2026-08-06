@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -165,9 +167,9 @@ func (s *AuthService) CheckRateLimit(ctx context.Context, userID string, usingOw
 	if s.cache == nil || !s.cache.Available() {
 		return -1, nil // Redis 不可用，降级放行
 	}
-	// 查用户配额（无凭证记录时按默认 10/天，不阻断 Knovis 用户首次使用）
-	quota := 10
-	if u, err := s.userRepo.GetByID(userID); err == nil && u != nil {
+	// 查用户配额（默认 5 次/天；环境变量 FREE_QUOTA_PER_DAY 可配置；用户记录字段可 per-user 覆盖）
+	quota := getFreeQuotaPerDay()
+	if u, err := s.userRepo.GetByID(userID); err == nil && u != nil && u.RateQuotaPerDay > 0 {
 		quota = u.RateQuotaPerDay
 	}
 	if quota <= 0 {
@@ -194,6 +196,20 @@ func (s *AuthService) CheckRateLimit(ctx context.Context, userID string, usingOw
 // rateLimitKey 构造限流计数 key：agent:rate:{userID}:{YYYYMMDD}
 func rateLimitKey(userID string, t time.Time) string {
 	return fmt.Sprintf("agent:rate:%s:%04d%02d%02d", userID, t.Year(), t.Month(), t.Day())
+}
+
+// getFreeQuotaPerDay 读取免费额度配置（FREE_QUOTA_PER_DAY 环境变量，默认 5 次/天）
+// 用户未自带 API key、使用系统兜底 key 时的每日免费对话次数
+func getFreeQuotaPerDay() int {
+	v := os.Getenv("FREE_QUOTA_PER_DAY")
+	if v == "" {
+		return 5
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 5
+	}
+	return n
 }
 
 // secondsUntilUTCMidnight 计算到下一个 UTC 午夜的秒数
