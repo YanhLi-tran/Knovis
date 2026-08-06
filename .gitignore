@@ -36,6 +36,7 @@ htmlcov/
 
 # Agent 运行数据
 chroma_data/
+data/
 uploads/
 logs/
 *.log
