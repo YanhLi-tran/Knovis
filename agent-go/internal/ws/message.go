@@ -48,6 +48,7 @@ type OutgoingMessage struct {
 	CommandType string         `json:"command_type"` // file_read/file_write/grep/sandbox_exec
 	Args        map[string]any `json:"args"`         // 指令参数（与工具 schema 对应）
 	Timeout     int            `json:"timeout"`      // 超时秒数（客户端执行上限）
+	TraceID     string         `json:"trace_id,omitempty"` // 全链路 trace_id（agent-go 透传，客户端日志/审计用）
 }
 
 // ResultPayload 工具执行结果（内部传递用）

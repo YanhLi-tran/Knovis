@@ -12,6 +12,8 @@ import (
 	"mime/multipart"
 	"net/http"
 	"time"
+
+	"agent-go/internal/trace"
 )
 
 // DocSearchResult 检索单条结果(与 doc-service RAGSearchResultItem 对齐)
@@ -104,24 +106,6 @@ type DeleteResult struct {
 	Deleted bool `json:"deleted"`
 	Chunks  int  `json:"chunks"`
 	Vectors int  `json:"vectors"`
-}
-
-// traceIDKey 是 context 中 trace_id 的 key 类型
-type traceIDKeyType struct{}
-
-var traceIDKey = traceIDKeyType{}
-
-// WithTraceID 将 trace_id 注入 context，供下游 rag client 和 orchestrator 使用
-func WithTraceID(ctx context.Context, traceID string) context.Context {
-	return context.WithValue(ctx, traceIDKey, traceID)
-}
-
-// TraceIDFromContext 从 context 提取 trace_id，不存在则返回空串
-func TraceIDFromContext(ctx context.Context) string {
-	if v, ok := ctx.Value(traceIDKey).(string); ok {
-		return v
-	}
-	return ""
 }
 
 // DocClient doc-service HTTP 客户端
@@ -280,7 +264,7 @@ func (c *DocClient) postJSON(ctx context.Context, path string, body any, out any
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
+	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
 		req.Header.Set("X-Trace-Id", traceID)
 	}
 	resp, err := c.http.Do(req)

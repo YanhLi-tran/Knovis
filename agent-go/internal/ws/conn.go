@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"agent-go/internal/trace"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -186,6 +188,8 @@ func (c *ClientConn) SendCommand(ctx context.Context, cmdType string, args map[s
 		CommandType: cmdType,
 		Args:        args,
 		Timeout:     int(timeout.Seconds()),
+		// 全链路 trace：透传 trace_id 到本地客户端（工具执行链路可追踪）
+		TraceID: trace.TraceIDFromContext(ctx),
 	}
 	data, err := json.Marshal(out)
 	if err != nil {

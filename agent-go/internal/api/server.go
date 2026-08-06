@@ -85,7 +85,8 @@ func (s *Server) corsMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-LLM-API-Key, X-Client-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-LLM-API-Key, X-Client-ID, X-Trace-Id")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Trace-Id, X-RateLimit-Remaining")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return

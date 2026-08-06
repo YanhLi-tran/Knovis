@@ -7,9 +7,7 @@ import (
 	"log"
 	"net/http"
 
-	"agent-go/internal/rag"
-
-	"github.com/google/uuid"
+	"agent-go/internal/trace"
 )
 
 // ChatRequest 对话请求
@@ -113,9 +111,13 @@ func (s *Server) chatStream(c *GinCompat) {
 	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
 
-	// 生成 trace_id 并注入 context，供 rag client (X-Trace-Id header) 和 SSE 事件使用
-	traceID := uuid.New().String()[:8]
-	ctx = rag.WithTraceID(ctx, traceID)
+	// 生成 trace_id 并注入 context，供 rag/memory client (X-Trace-Id header)、LLM 调用和 SSE 事件使用
+	// 中间件已在 request context 注入 trace_id（响应头 X-Trace-Id），此处优先复用，保证全局一致
+	traceID := trace.TraceIDFromContext(c.Request().Context())
+	if traceID == "" {
+		traceID = trace.NewID()
+	}
+	ctx = trace.WithTraceID(ctx, traceID)
 
 	// flusher 用于实时推送 SSE
 	flusher, ok := c.Writer().(http.Flusher)

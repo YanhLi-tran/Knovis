@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agent-go/internal/config"
+	"agent-go/internal/trace"
 )
 
 // MemoryClient Python 记忆子服务 HTTP 客户端（/embed + /search + /delete）
@@ -105,12 +106,13 @@ func (c *MemoryClient) SearchWithStats(ctx context.Context, projectID, query str
 	if topK <= 0 {
 		topK = 5
 	}
-	log.Printf("[INFO][memory] POST /search 开始 (project=%s, topK=%d)", projectID, topK)
+	traceID := trace.TraceIDFromContext(ctx)
+	log.Printf("[INFO][memory] POST /search 开始 (project=%s, topK=%d) trace=%s", projectID, topK, traceID)
 	var resp searchResponse
 	if err := c.post(ctx, "/search", searchRequest{ProjectID: projectID, Query: query, TopK: topK}, &resp); err != nil {
 		return resp, err
 	}
-	log.Printf("[INFO][memory] POST /search 完成 (project=%s, results=%d, bm25=%d, rag=%d)", projectID, len(resp.Results), resp.BM25Count, resp.RAGCount)
+	log.Printf("[INFO][memory] POST /search 完成 (project=%s, results=%d, bm25=%d, rag=%d) trace=%s", projectID, len(resp.Results), resp.BM25Count, resp.RAGCount, traceID)
 	return resp, nil
 }
 
@@ -165,10 +167,14 @@ func (c *MemoryClient) ExtractKeywords(ctx context.Context, texts []string, topK
 
 // DeleteCollection 删除整个项目 collection
 func (c *MemoryClient) DeleteCollection(ctx context.Context, projectID string) error {
-	log.Printf("[INFO][memory] DELETE /collection/%s 开始", projectID)
+	traceID := trace.TraceIDFromContext(ctx)
+	log.Printf("[INFO][memory] DELETE /collection/%s 开始 trace=%s", projectID, traceID)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.baseURL+"/collection/"+projectID, nil)
 	if err != nil {
 		return err
+	}
+	if traceID != "" {
+		req.Header.Set("X-Trace-Id", traceID)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -178,16 +184,19 @@ func (c *MemoryClient) DeleteCollection(ctx context.Context, projectID string) e
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("删除 collection 失败: HTTP %d", resp.StatusCode)
 	}
-	log.Printf("[INFO][memory] DELETE /collection/%s 完成", projectID)
+	log.Printf("[INFO][memory] DELETE /collection/%s 完成 trace=%s", projectID, traceID)
 	return nil
 }
 
 // Health 健康检查（探活 Python 子服务）
 func (c *MemoryClient) Health(ctx context.Context) bool {
-	log.Printf("[INFO][memory] GET /health 开始")
+	log.Printf("[INFO][memory] GET /health 开始 trace=%s", trace.TraceIDFromContext(ctx))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/health", nil)
 	if err != nil {
 		return false
+	}
+	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
+		req.Header.Set("X-Trace-Id", traceID)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -199,7 +208,7 @@ func (c *MemoryClient) Health(ctx context.Context) bool {
 	return ok
 }
 
-// post 通用 POST 请求
+// post 通用 POST 请求（透传 X-Trace-Id 头，全链路 trace）
 func (c *MemoryClient) post(ctx context.Context, path string, body any, out any) error {
 	b, err := json.Marshal(body)
 	if err != nil {
@@ -210,6 +219,9 @@ func (c *MemoryClient) post(ctx context.Context, path string, body any, out any)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
+		req.Header.Set("X-Trace-Id", traceID)
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {

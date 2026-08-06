@@ -160,6 +160,8 @@ func main() {
 	// P4: 注册 knovis Skill（低频复杂 → Skill 按需加载，只读）
 	// authSvc 为 nil 时（dev 模式无 JWT secret）仍可注册：load_skill 时 resolveToken 会返回明确错误
 	skillReg.Register(skills.NewKnovisSkillDefinition(authSvc, knovisClient))
+	// P6: 注册 kb_summary Skill（企业知识库总结，按需加载；依赖 doc-service，无需用户 token）
+	skillReg.Register(skills.NewKBSummarySkillDefinition(docClient))
 
 	// 创建 API 服务器（go-zero rest）并启动
 	server := api.NewServer(orch, questionMgr, cfgMgr, repos, memSvc, ttlScheduler, msgTtlScheduler, authSvc, authMode, wsHub, approvalMgr, docClient, knovisClient)

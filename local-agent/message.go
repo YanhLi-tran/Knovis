@@ -30,6 +30,7 @@ type serverCommand struct {
 	CommandType string         `json:"command_type"` // file_read/file_write/grep/sandbox_exec
 	Args        map[string]any `json:"args"`         // 指令参数
 	Timeout     int            `json:"timeout"`      // 超时秒数
+	TraceID     string         `json:"trace_id,omitempty"` // 全链路 trace_id（服务端透传，日志/审计用）
 }
 
 // clientMessage 客户端 → 服务端消息（register/result/heartbeat/error 统一信封）

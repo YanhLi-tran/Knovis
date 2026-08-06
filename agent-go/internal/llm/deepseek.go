@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"agent-go/internal/trace"
 )
 
 // DeepSeekProvider DeepSeek LLM 实现（兼容 OpenAI 协议）
@@ -87,6 +89,12 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
 		httpReq.Header.Set("Accept", "text/event-stream")
+		// 全链路 trace：透传 X-Trace-Id（OpenAI 兼容协议忽略未知头，不影响请求）
+		traceID := trace.TraceIDFromContext(ctx)
+		if traceID != "" {
+			httpReq.Header.Set("X-Trace-Id", traceID)
+		}
+		log.Printf("[INFO][llm] ChatStream 请求 model=%s trace=%s", p.model, traceID)
 
 		resp, err := p.client.Do(httpReq)
 		if err != nil {

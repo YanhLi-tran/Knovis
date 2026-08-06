@@ -14,6 +14,7 @@
 import os
 import time
 import logging
+import contextvars
 import shutil
 from typing import List, Optional, Any
 
@@ -21,16 +22,48 @@ import uvicorn
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
+# ==================== 全链路 trace_id ====================
+# agent-go 通过 X-Trace-Id 头透传 trace_id；中间件存入 contextvar，
+# 日志 Filter 自动拼入每条日志（无 trace 显示 "-"），响应头 X-Trace-Id 回显。
+
+_trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
+
+
+class TraceContextMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        trace_id = request.headers.get("X-Trace-Id", "")
+        token = _trace_id_var.set(trace_id)
+        try:
+            response = await call_next(request)
+            if trace_id:
+                response.headers["X-Trace-Id"] = trace_id
+            return response
+        finally:
+            _trace_id_var.reset(token)
+
+
+class TraceFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.trace_id = _trace_id_var.get() or "-"
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s [trace=%(trace_id)s]: %(message)s",
 )
 logger = logging.getLogger("doc-service")
+# TraceFilter 挂到 root handler：任何冒泡到 root 的 record（业务 logger + uvicorn.access 等）
+# 都在格式化前补上 trace_id 属性，避免 %(trace_id)s KeyError。
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(TraceFilter())
 
 app = FastAPI(title="Agent Doc Service", version="1.0.0")
+app.add_middleware(TraceContextMiddleware)
 
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "800"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "64"))
@@ -445,4 +478,6 @@ if __name__ == "__main__":
     port = int(os.getenv("DOC_SERVICE_PORT", "8003"))
     host = os.getenv("DOC_SERVICE_HOST", "127.0.0.1")
     logger.info("启动 doc-service: %s:%d", host, port)
-    uvicorn.run("main:app", host=host, port=port, log_level="info")
+    uvicorn.run("main:app", host=host, port=port, log_level="info",
+                # log_config=None：禁用 uvicorn 默认日志配置，让上面 basicConfig 的 [trace=xxx] 格式生效
+                log_config=None)

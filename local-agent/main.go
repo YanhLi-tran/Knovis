@@ -208,6 +208,9 @@ func runSession() error {
 		if cmd.Type != "command" {
 			continue // 忽略非 command 消息（ping/pong 由 gorilla 底层处理）
 		}
+		if cmd.TraceID != "" {
+			log.Printf("[INFO] 收到命令 type=%s request_id=%s trace_id=%s", cmd.CommandType, cmd.RequestID, cmd.TraceID)
+		}
 		// 异步执行（支持多指令并发，客户端按自身能力并行处理）
 		go handleCommand(s, cmd)
 	}

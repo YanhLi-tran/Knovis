@@ -9,23 +9,58 @@ Chroma 嵌入式单实例，数据存 ./data/chroma/，collection 命名 proj_{p
 """
 import os
 import logging
+import contextvars
 from typing import List, Dict, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
+
+# ==================== 全链路 trace_id ====================
+# agent-go 通过 X-Trace-Id 头透传 trace_id；中间件存入 contextvar，
+# 日志 Filter 自动将其拼入每条日志（无 trace 时显示 "-"），响应头回显便于调用方校验。
+
+_trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("trace_id", default="")
+
+
+class TraceContextMiddleware(BaseHTTPMiddleware):
+    """读取 X-Trace-Id 头 → contextvar → 日志 + 响应头回显。"""
+
+    async def dispatch(self, request, call_next):
+        trace_id = request.headers.get("X-Trace-Id", "")
+        token = _trace_id_var.set(trace_id)
+        try:
+            response = await call_next(request)
+            if trace_id:
+                response.headers["X-Trace-Id"] = trace_id
+            return response
+        finally:
+            _trace_id_var.reset(token)
+
+
+class TraceFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        record.trace_id = _trace_id_var.get() or "-"
+        return True
+
 
 # 日志配置
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(name)s [trace=%(trace_id)s]: %(message)s",
 )
 logger = logging.getLogger("memory-service")
+# TraceFilter 挂到 root handler：任何冒泡到 root 的 record（业务 logger + uvicorn.access 等）
+# 都在格式化前补上 trace_id 属性，避免 %(trace_id)s KeyError。
+for _handler in logging.getLogger().handlers:
+    _handler.addFilter(TraceFilter())
 
 app = FastAPI(title="Agent Memory Service", version="1.0.0")
+app.add_middleware(TraceContextMiddleware)
 
 
 # ==================== 请求/响应模型 ====================
@@ -274,5 +309,7 @@ if __name__ == "__main__":
         host=host,
         port=port,
         log_level="info",
+        # log_config=None：禁用 uvicorn 默认日志配置，让上面 basicConfig 的 [trace=xxx] 格式生效
+        log_config=None,
         # workers=1：模型单例，多 worker 会重复加载模型占内存
     )
