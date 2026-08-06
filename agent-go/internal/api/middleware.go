@@ -87,6 +87,10 @@ func isPublicPath(path string) bool {
 	if path == "/health" || path == "/" {
 		return true
 	}
+	// local-agent 下载引导信息公开（不含用户数据）
+	if path == "/agent/local/info" {
+		return true
+	}
 	if strings.HasPrefix(path, "/static/") {
 		return true
 	}

@@ -99,6 +99,8 @@ func (s *Server) registerRoutes(srv *rest.Server) {
 	// 健康检查 + 工具列表
 	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/health", Handler: s.adapt(s.health)})
 	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/tools", Handler: s.adapt(s.listTools)})
+	// local-agent 下载引导信息（公开，前端引导弹窗用）
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/agent/local/info", Handler: s.adapt(s.getLocalAgentInfo)})
 
 	// SSO 形态：注册/登录/刷新由 Knovis 提供，agent-go 仅保留 logout（公开）+ me + 凭证管理（需鉴权）
 	// 反向代理 Knovis 登录/注册接口(避免前端跨端口调用被浏览器拦截)

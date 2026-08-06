@@ -71,6 +71,8 @@ type AppConfig struct {
 	KnovisAPIBaseURL string // Knovis API 基础地址
 	// P5: RAG 文档服务(doc-service,8003)
 	DocServiceURL string // doc-service 地址(PDF 摄入 + RAG 检索)
+	// P6: local-agent 分发（前端下载引导用）
+	AgentDownloadBaseURL string // local-agent 下载引导地址(默认本项目 GitHub Releases)
 }
 
 // Manager 配置管理器（含热加载）
@@ -222,6 +224,8 @@ func loadAppConfig() *AppConfig {
 		KnovisAPIBaseURL: getEnv("KNOVIS_API_BASE_URL", "http://127.0.0.1:8080"),
 		// P5: RAG 文档服务
 		DocServiceURL: getEnv("DOC_SERVICE_URL", "http://127.0.0.1:8003"),
+		// local-agent 下载引导地址（可配置：自建下载服务器/内网部署时覆盖）
+		AgentDownloadBaseURL: getEnv("AGENT_DOWNLOAD_BASE_URL", "https://github.com/YanhLi-tran/Knovis/releases/latest"),
 	}
 }
 
