@@ -71,6 +71,7 @@ func InitDB(cfg *DBConfig) (*gorm.DB, error) {
 		&UserConfig{}, &Project{}, &Memory{}, &MemoryArchive{}, &CrossProjectGrant{},
 		&AuditLog{},
 		&Document{}, &DocumentChunk{}, // P5: RAG 文档系统
+		&UserSkill{}, // P7: 用户上传的私有 Skill
 	); err != nil {
 		return nil, fmt.Errorf("自动建表失败: %w", err)
 	}

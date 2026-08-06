@@ -17,6 +17,7 @@ type Repositories struct {
 	Audit           *AuditRepository  // P3: 审计日志（只写）
 	Document        *DocumentRepository        // P5: RAG 文档
 	DocumentChunk   *DocumentChunkRepository  // P5: RAG 文档分块
+	UserSkill       *UserSkillRepository       // P7: 用户上传的私有 Skill
 }
 
 // NewRepositories 初始化所有 Repository（不含缓存，缓存由 main 注入）
@@ -34,6 +35,7 @@ func NewRepositories(db *gorm.DB) *Repositories {
 		Audit:           NewAuditRepository(db),
 		Document:        NewDocumentRepository(db),
 		DocumentChunk:   NewDocumentChunkRepository(db),
+		UserSkill:       NewUserSkillRepository(db),
 	}
 }
 

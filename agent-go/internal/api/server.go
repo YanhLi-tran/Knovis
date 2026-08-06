@@ -14,6 +14,7 @@ import (
 	"agent-go/internal/rag"
 	"agent-go/internal/storage"
 	"agent-go/internal/tools"
+	"agent-go/internal/tools/skill"
 	"agent-go/internal/ws"
 
 	"github.com/zeromicro/go-zero/rest"
@@ -37,10 +38,11 @@ type Server struct {
 	wsHandler   *ws.Handler    // P4: WebSocket 升级处理器（本地客户端连接，file/sandbox 工具通道）
 	docClient   *rag.DocClient // P5: doc-service 客户端(RAG 文档管理 + 检索)
 	knovisClient *knovis.Client // Knovis 客户端（/auth/me 透传用户资料）
+	skillReg    *skill.Registry // P7: Skill 注册表（用户上传/删除 skill 时同步注册/移除）
 }
 
 // NewServer 创建 API 服务器
-func NewServer(orch *orchestrator.Orchestrator, qMgr *tools.QuestionManager, cfgMgr *config.Manager, repos *storage.Repositories, memSvc *memory.Service, ttlSch *memory.TTLScheduler, msgTtlSch *memory.MessageTTLScheduler, authSvc *auth.AuthService, authMode string, wsHub *ws.Hub, approvalMgr *tools.ApprovalManager, docClient *rag.DocClient, knovisClient *knovis.Client) *Server {
+func NewServer(orch *orchestrator.Orchestrator, qMgr *tools.QuestionManager, cfgMgr *config.Manager, repos *storage.Repositories, memSvc *memory.Service, ttlSch *memory.TTLScheduler, msgTtlSch *memory.MessageTTLScheduler, authSvc *auth.AuthService, authMode string, wsHub *ws.Hub, approvalMgr *tools.ApprovalManager, docClient *rag.DocClient, knovisClient *knovis.Client, skillReg *skill.Registry) *Server {
 	s := &Server{
 		orchestrator:    orch,
 		questionMgr:     qMgr,
@@ -55,6 +57,7 @@ func NewServer(orch *orchestrator.Orchestrator, qMgr *tools.QuestionManager, cfg
 		auditLogger:     audit.NewLogger(repos.Audit),
 		docClient:       docClient,
 		knovisClient:    knovisClient,
+		skillReg:        skillReg,
 	}
 	// P4: 创建 WebSocket 处理器（复用 authService 鉴权）
 	s.wsHandler = ws.NewHandler(wsHub, s.authService, s.authMode)
@@ -171,6 +174,11 @@ func (s *Server) registerRoutes(srv *rest.Server) {
 	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/documents/:id", Handler: s.adapt(s.deleteDocument)})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/documents/scan", Handler: s.adapt(s.scanDocuments)})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/rag/debug", Handler: s.adapt(s.ragDebug)})
+
+	// P7: 用户私有 Skill 管理（上传/列表/删除，鉴权后按 user_id 隔离）
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/skills/upload", Handler: s.adapt(s.uploadUserSkill)})
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/skills/mine", Handler: s.adapt(s.listMySkills)})
+	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/skills/:name", Handler: s.adapt(s.deleteUserSkill)})
 
 	// 静态文件服务（前端页面）— 用 rest.WithFileServer 注册（见 Start）
 	// 根路径返回 index.html

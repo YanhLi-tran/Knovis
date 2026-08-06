@@ -36,8 +36,16 @@ func main() {
 	sandbox.RegisterSandboxTools(registry, ws.NewHub())
 
 	skillReg := skill.NewRegistry()
-	skillReg.Register(skills.NewKnovisSkillDefinition(nil, knovis.NewClient("")))
-	skillReg.Register(skills.NewKBSummarySkillDefinition(rag.NewDocClient("")))
+	// 与 main.go 等价：从 skills/ 目录加载文件型 skill + 附加内置 Go 工具
+	if err := skillReg.LoadFromDir("skills", 512*1024); err != nil {
+		panic(err)
+	}
+	if err := skillReg.AttachToolBuilders(skills.KnovisSkillName, skills.KnovisToolBuilders(nil, knovis.NewClient(""))); err != nil {
+		panic(err)
+	}
+	if err := skillReg.AttachToolBuilders(skills.KBSummarySkillName, []skill.ToolBuilder{skills.BuildKBListDocs(rag.NewDocClient(""))}); err != nil {
+		panic(err)
+	}
 
 	// ===== 2) 每轮可见工具定义（buildTools 等价，未加载 skill 时）=====
 	defs := registry.ToDefinitions()
@@ -70,9 +78,9 @@ func main() {
 	fmt.Printf("%-28s %10s %10d\n", "FC 工具合计", "", fcTotal)
 
 	// ===== 3) Skill 注册表块 =====
-	skillBlock := skill.BuildSkillRegistryBlock(skillReg.List())
+	skillBlock := skill.BuildSkillRegistryBlock(skillReg.List(""))
 	skillBlockTokens := estimator.Estimate(skillBlock)
-	metaList := skillReg.List()
+	metaList := skillReg.List("")
 	fmt.Printf("%-28s %10d %10d\n", fmt.Sprintf("Skill 注册表块(%d skill)", len(metaList)), len(skillBlock), skillBlockTokens)
 	fmt.Printf("%-28s %10s %10d\n", "工具相关合计(每轮)", "", fcTotal+skillBlockTokens)
 

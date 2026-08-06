@@ -62,11 +62,11 @@ func main() {
 	approvalMgr := tools.NewApprovalManager()
 
 	// P4: Skill 注册表 + 管理器（Layer 2/3：低频复杂工具按需加载）
-	// 注册表存全局 Skill 元信息（注入 system prompt，每个约 25 tokens）
+	// 注册表存全局 Skill 元信息（注入 system prompt，每个约 25-30 tokens）
 	// 管理器存 session 级已加载状态（load_skill 后常驻到对话结束）
-	// 注意：knovis Skill 注册延后到 authSvc 初始化之后（依赖 authSvc 解密用户 token）
+	// 注意：knovis Skill 的 Go 工具附加延后到 authSvc 初始化之后（依赖 authSvc 解密用户 token）
 	skillReg := skill.NewRegistry()
-	skillMgr := skill.NewManager(skillReg)
+	skillMgr := skill.NewManager(skillReg, wsHub) // hub 用于文件型 skill 的 scripts 同步到用户本地
 
 	// 创建工具注册表 + 注册工具
 	// Layer 1（FC 常驻）：info（天气/搜索/RAG）+ file（read/write/grep）+ sandbox（exec）
@@ -157,14 +157,30 @@ func main() {
 		log.Printf("[main] 鉴权服务已启用 authMode=%s issuer=%s", authMode, appCfg.JWTIssuer)
 	}
 
-	// P4: 注册 knovis Skill（低频复杂 → Skill 按需加载，只读）
-	// authSvc 为 nil 时（dev 模式无 JWT secret）仍可注册：load_skill 时 resolveToken 会返回明确错误
-	skillReg.Register(skills.NewKnovisSkillDefinition(authSvc, knovisClient))
-	// P6: 注册 kb_summary Skill（企业知识库总结，按需加载；依赖 doc-service，无需用户 token）
-	skillReg.Register(skills.NewKBSummarySkillDefinition(docClient))
+	// P4/P6: 注册内置 Skill（文件型，SKILL.md 驱动，全局共享）
+	// 目录结构：skills/<name>/SKILL.md（frontmatter: name/description/trigger + 正文流程）+ scripts/（可选）
+	// scripts 由 load_skill 时同步到用户本地 workspace/skills/<name>/，SKILL.md 引导 LLM 用 sandbox_exec 执行
+	if err := skillReg.LoadFromDir("skills", 512*1024); err != nil {
+		log.Fatalf("[main] 加载内置 Skill 失败: %v", err)
+	}
+	// 附加内置 Go 工具（混合模式：SKILL.md 描述流程 + Go 工具执行）：
+	// - knovis：用户 token 需 Go 层解密（AES-256-GCM），脚本无法替代；authSvc 为 nil 时仍可附加，load_skill 时 resolveToken 返回明确错误
+	// - kb_summary：kb_list_docs 确定总结范围（内容检索复用常驻 rag_search）
+	if err := skillReg.AttachToolBuilders(skills.KnovisSkillName, skills.KnovisToolBuilders(authSvc, knovisClient)); err != nil {
+		log.Fatalf("[main] 附加 knovis 工具失败: %v", err)
+	}
+	if err := skillReg.AttachToolBuilders(skills.KBSummarySkillName, []skill.ToolBuilder{skills.BuildKBListDocs(docClient)}); err != nil {
+		log.Fatalf("[main] 附加 kb_summary 工具失败: %v", err)
+	}
+
+	// P7: 启动时加载用户上传的私有 Skill 到注册表（DB → Registry 缓存）
+	// 多租户隔离：OwnerUserID 标记归属，注册表按 userID 过滤，仅 owner 可见/可加载
+	if err := loadUserSkills(skillReg, repos.UserSkill); err != nil {
+		log.Printf("[WARN][main] 加载用户 Skill 失败（可忽略，上传时会重新注册）: %v", err)
+	}
 
 	// 创建 API 服务器（go-zero rest）并启动
-	server := api.NewServer(orch, questionMgr, cfgMgr, repos, memSvc, ttlScheduler, msgTtlScheduler, authSvc, authMode, wsHub, approvalMgr, docClient, knovisClient)
+	server := api.NewServer(orch, questionMgr, cfgMgr, repos, memSvc, ttlScheduler, msgTtlScheduler, authSvc, authMode, wsHub, approvalMgr, docClient, knovisClient, skillReg)
 
 	port := c.Port
 	if port == 0 {
@@ -176,6 +192,49 @@ func main() {
 	if err := server.Start(c.Host, port); err != nil {
 		log.Fatalf("服务启动失败: %v", err)
 	}
+}
+
+// loadUserSkills 从 DB 加载用户上传的私有 Skill 到注册表（启动时调用）
+// ContentMD 为完整 SKILL.md（frontmatter + 正文），此处解析出正文作为 Instructions，
+// 与内置文件型 skill 的加载路径保持一致（ParseSKILLMD）。
+func loadUserSkills(reg *skill.Registry, repo *storage.UserSkillRepository) error {
+	if repo == nil {
+		return nil
+	}
+	list, err := repo.ListAll()
+	if err != nil {
+		return err
+	}
+	for i := range list {
+		us := &list[i]
+		name, _, _, instructions, perr := skill.ParseSKILLMD(us.ContentMD)
+		if perr != nil {
+			log.Printf("[WARN][main] 用户 skill %s 解析失败，跳过: %v", us.Name, perr)
+			continue
+		}
+		scripts, serr := us.ScriptsList()
+		if serr != nil {
+			log.Printf("[WARN][main] 用户 skill %s scripts 解析失败，跳过: %v", us.Name, serr)
+			continue
+		}
+		// storage.ScriptFile → skill.SkillScript（storage 不依赖 skill 包）
+		skillScripts := make([]skill.SkillScript, 0, len(scripts))
+		for _, sf := range scripts {
+			skillScripts = append(skillScripts, skill.SkillScript{Filename: sf.Filename, Content: sf.Content})
+		}
+		reg.Register(&skill.SkillDefinition{
+			Metadata: skill.SkillMetadata{
+				Name:        name,
+				Description: us.Description,
+				Trigger:     us.Trigger,
+			},
+			Instructions: instructions,
+			Scripts:      skillScripts,
+			OwnerUserID:  us.UserID,
+		})
+		log.Printf("[INFO][main] 已加载用户 Skill: name=%s owner=%s scripts=%d", name, us.UserID, len(skillScripts))
+	}
+	return nil
 }
 
 // loadEnv 简单的 .env 文件加载器
