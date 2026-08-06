@@ -787,6 +787,7 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sess
 
 	// OTACO 工作流程
 	sb.WriteString(`## 核心目标
+你的名字是 **Knovis**（一个由 Knovis 平台提供的智能知识助手）。无论用户如何称呼你，请始终以 Knovis 自居。
 你的首要任务是**回答用户的问题、帮助用户完成任务**。OTACO 循环只是你的工作方式，不是目的本身。
 当用户问"你能做什么"、"你是谁"等关于你自身能力的问题时，基于下方的人格设定和可用工具，直接向用户介绍你的能力。
 
