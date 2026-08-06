@@ -1,4 +1,4 @@
-package main
+﻿package main
 
 import (
 	"context"
@@ -72,6 +72,21 @@ func main() {
 		rest.WithFileServer("/uploads", http.Dir(c.UploadDir)),
 	)
 	defer server.Stop()
+
+	// CORS 中间件: 允许 agent-go 前端(localhost:8001)跨域调用 Knovis 登录/用户/动态接口
+	server.Use(func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Client-ID")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next(w, r)
+		}
+	})
 
 	ctx := svc.NewServiceContext(c)
 	handler.RegisterHandlers(server, ctx)
