@@ -61,6 +61,13 @@ scripts/*_eval_env*
 # local-agent 工作目录(agent 文件操作沙箱, 与 local-agent 分离, 不入库)
 local-agent/workspace/
 
+# agent 工作区(运行时目录, local-agent 自动创建, 不入库)
+agent-workspace/
+
+# 编辑器/系统备份文件
+*~
+*.swp
+
 # 临时文件
 *.tmp
 *.swp
