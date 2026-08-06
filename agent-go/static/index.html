@@ -2529,6 +2529,22 @@ function dismissLoginModal() {
 /* ========================================================================
  * 鉴权模块
  * ====================================================================== */
+// activateLocalAgent 登录/注册成功后激活本机 local-agent
+// 把当前用户 token 推给本地控制服务(127.0.0.1:17000)，local-agent 用该 token 连接
+// agent-go——userID 始终与当前登录用户一致，文件/沙箱工具按用户路由不会失配
+function activateLocalAgent(token) {
+    if (!token) return;
+    fetch('http://127.0.0.1:17000/activate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token })
+    }).then(resp => {
+        if (resp.ok) toast('success', '本地 Agent 已连接', '文件写入/沙箱执行可用');
+    }).catch(() => {
+        // local-agent 未运行：静默，不打扰登录流程（可自行启动 local-agent.exe 后重新登录触发）
+    });
+}
+
 // performLogin 用邮箱密码执行登录（doLogin / doRegister 共用）
 async function performLogin(email, password, modalId) {
     const resp = await fetch('/api/auth/login', {
@@ -2545,6 +2561,7 @@ async function performLogin(email, password, modalId) {
     if (modalId) closeModal(modalId);
     toast('success', '登录成功', '正在加载用户信息...');
     await loadUserInfo();
+    activateLocalAgent(State.token); // 同步激活本机 local-agent，userID 与当前登录用户一致
     connectWS();
     if (_loginOnClose) { const cb = _loginOnClose; _loginOnClose = null; cb(); }
 }
