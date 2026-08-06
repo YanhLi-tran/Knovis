@@ -74,6 +74,7 @@ func (s *session) writeJSON(msg clientMessage) error {
 func main() {
 	flagServer := flag.String("server", "ws://127.0.0.1:8001", "中央服务器 WebSocket 地址（如 ws://127.0.0.1:8001）")
 	flagToken := flag.String("token", "", "JWT access token（可选；也可用 AGENT_TOKEN 环境变量，或由前端登录后自动激活）")
+	flagWorkDir := flag.String("workdir", "", "agent 文件操作工作目录（默认 ./workspace；可用 AGENT_WORK_DIR 环境变量覆盖）")
 	showVersion := flag.Bool("version", false, "打印版本号并退出")
 	flag.Parse()
 
@@ -87,6 +88,12 @@ func main() {
 		*flagToken = os.Getenv("AGENT_TOKEN")
 	}
 	setToken(*flagToken)
+
+	// 初始化 agent 工作目录（沙箱根，与 local-agent 目录分离）
+	if *flagWorkDir == "" {
+		*flagWorkDir = os.Getenv("AGENT_WORK_DIR")
+	}
+	initWorkDir(*flagWorkDir)
 
 	log.Printf("[INFO] local-agent 启动 version=%s platform=%s", clientVersion, runtime.GOOS)
 	log.Printf("[INFO] 本地控制服务: http://%s（前端登录后自动激活，绑定当前用户）", localCtrlAddr)

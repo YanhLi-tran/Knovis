@@ -3,8 +3,10 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +15,52 @@ import (
 	"strings"
 	"time"
 )
+
+// agentWorkDir agent 文件操作的工作目录（沙箱根）
+// 所有文件工具（file_read/file_write/grep/file_list）解析后的路径必须位于此目录内，
+// 与 local-agent 自身目录及项目文件隔离，防止 agent 误读写本地 agent 目录外的内容。
+// 由 main 启动时 initWorkDir 初始化（-workdir 参数或 AGENT_WORK_DIR 环境变量，默认 ./workspace）。
+var agentWorkDir string
+
+// initWorkDir 初始化 agent 工作目录（不存在则创建）
+func initWorkDir(dir string) {
+	if dir == "" {
+		dir = "workspace"
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		abs = dir
+	}
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		fmt.Printf("[WARN] 创建工作目录失败: %v\n", err)
+	}
+	agentWorkDir = abs
+	logf("agent 工作目录: %s（文件操作限定于此目录内）", agentWorkDir)
+}
+
+// resolvePath 将 agent 传入的 path 解析为工作区内的绝对路径
+// 相对路径 → 基于工作区；绝对路径 → 校验必须位于工作区内，越界返回错误（防越权读写）
+func resolvePath(p string) (string, error) {
+	if p == "" {
+		return "", errors.New("缺少参数 path")
+	}
+	var abs string
+	if filepath.IsAbs(p) {
+		abs = filepath.Clean(p)
+	} else {
+		abs = filepath.Join(agentWorkDir, p)
+	}
+	rel, err := filepath.Rel(agentWorkDir, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("路径越出 agent 工作区(%s)，已拒绝: %s", agentWorkDir, p)
+	}
+	return abs, nil
+}
+
+// logf 简单日志（与 main 的 log 包一致）
+func logf(format string, args ...any) {
+	log.Printf(format, args...)
+}
 
 // handleCommand 分发执行命令（异步调用，支持多指令并发）
 func handleCommand(s *session, cmd serverCommand) {
@@ -47,11 +95,11 @@ func handleCommand(s *session, cmd serverCommand) {
 }
 
 // fileRead 读文件内容
-// args: path（必填）, max_size（可选，默认 10000 字符）
+// args: path（必填，工作区内相对路径或绝对路径）, max_size（可选，默认 10000 字符）
 func fileRead(args map[string]any) (string, string) {
-	path, _ := args["path"].(string)
-	if path == "" {
-		return "", "缺少参数 path"
+	path, err := resolvePath(args["path"].(string))
+	if err != nil {
+		return "", err.Error()
 	}
 	maxSize := 10000
 	if ms, ok := args["max_size"].(float64); ok && ms > 0 {
@@ -69,9 +117,12 @@ func fileRead(args map[string]any) (string, string) {
 }
 
 // fileWrite 写文件
-// args: path（必填）, content（必填）, mode（可选：write 覆盖/append 追加，默认 write）
+// args: path（必填，工作区内相对路径或绝对路径）, content（必填）, mode（可选：write 覆盖/append 追加，默认 write）
 func fileWrite(args map[string]any) (string, string) {
-	path, _ := args["path"].(string)
+	path, err := resolvePath(args["path"].(string))
+	if err != nil {
+		return "", err.Error()
+	}
 	content, _ := args["content"].(string)
 	mode, _ := args["mode"].(string)
 	if mode == "" {
@@ -80,7 +131,6 @@ func fileWrite(args map[string]any) (string, string) {
 	if path == "" {
 		return "", "缺少参数 path"
 	}
-	var err error
 	if mode == "append" {
 		f, openErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if openErr != nil {
@@ -98,16 +148,19 @@ func fileWrite(args map[string]any) (string, string) {
 }
 
 // grepFiles 在文件/目录中搜索匹配行
-// args: pattern（必填，正则）, path（必填，搜索起点）, glob（可选，文件名匹配模式，默认 *）
+// args: pattern（必填，正则）, path（必填，工作区内搜索起点）, glob（可选，文件名匹配模式，默认 *）
 func grepFiles(args map[string]any) (string, string) {
 	pattern, _ := args["pattern"].(string)
-	path, _ := args["path"].(string)
+	path, err := resolvePath(args["path"].(string))
+	if err != nil {
+		return "", err.Error()
+	}
 	glob, _ := args["glob"].(string)
 	if glob == "" {
 		glob = "*"
 	}
-	if pattern == "" || path == "" {
-		return "", "缺少参数 pattern/path"
+	if pattern == "" {
+		return "", "缺少参数 pattern"
 	}
 	re, err := regexp.Compile(pattern)
 	if err != nil {
@@ -208,8 +261,11 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 		return "", fmt.Sprintf("命令 %q 不在白名单内（白名单内免审批，白名单外需服务端审批）", cmdName)
 	}
 
-	// 工作目录（可选，默认当前目录）
+	// 工作目录（可选，默认 agent 工作区）
 	workdir, _ := args["workdir"].(string)
+	if workdir == "" {
+		workdir = agentWorkDir
+	}
 
 	// 跨平台执行：Windows 用 cmd /c，其他用 sh -c（支持管道/重定向）
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -279,9 +335,9 @@ func sanitizeEnv(env []string) []string {
 // fileList 列目录内容（文件名+大小+修改时间）
 // args: path（必填）, recursive（可选，默认 false）
 func fileList(args map[string]any) (string, string) {
-	path, _ := args["path"].(string)
-	if path == "" {
-		return "", "缺少参数 path"
+	path, err := resolvePath(args["path"].(string))
+	if err != nil {
+		return "", err.Error()
 	}
 	recursive, _ := args["recursive"].(bool)
 

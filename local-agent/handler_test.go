@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -144,4 +145,65 @@ func containsStrHelper(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// TestResolvePathSandbox 工作目录沙箱：相对路径基于工作区，越界路径被拒绝
+func TestResolvePathSandbox(t *testing.T) {
+	dir := t.TempDir()
+	initWorkDir(dir)
+
+	// 1) 相对路径 → 基于工作区
+	abs, err := resolvePath("notes/todo.txt")
+	if err != nil {
+		t.Fatalf("工作区内相对路径应允许: %v", err)
+	}
+	want := filepath.Join(dir, "notes", "todo.txt")
+	if abs != want {
+		t.Fatalf("相对路径解析错误: got=%s want=%s", abs, want)
+	}
+
+	// 2) 工作区内绝对路径 → 允许
+	inner := dir + "/a.txt"
+	if _, err := resolvePath(inner); err != nil {
+		t.Fatalf("工作区内绝对路径应允许: %v", err)
+	}
+
+	// 3) 越界: ../ 逃逸 → 拒绝
+	for _, p := range []string{"../secret.txt", "../../etc/passwd", "../local-agent/main.go"} {
+		if _, err := resolvePath(p); err == nil {
+			t.Fatalf("越界路径 %q 应被拒绝", p)
+		}
+	}
+
+	// 4) 越界: 工作区外绝对路径 → 拒绝（Windows 下 /etc/passwd 是相对路径, 会安全落入工作区内, 不在此断言）
+	for _, p := range []string{"C:\\Windows\\win.ini", "C:/Program Files"} {
+		if _, err := resolvePath(p); err == nil {
+			t.Fatalf("工作区外绝对路径 %q 应被拒绝", p)
+		}
+	}
+}
+
+// TestFileWriteSandbox 文件写入受限于工作区
+func TestFileWriteSandbox(t *testing.T) {
+	dir := t.TempDir()
+	initWorkDir(dir)
+
+	// 工作区内相对路径可写
+	res, errMsg := fileWrite(map[string]any{"path": "out.txt", "content": "hello"})
+	if errMsg != "" {
+		t.Fatalf("工作区内写入应成功: %s", errMsg)
+	}
+	if res == "" {
+		t.Fatal("写入应有返回")
+	}
+
+	// 越界路径被拒绝
+	_, errMsg = fileWrite(map[string]any{"path": "../escape.txt", "content": "x"})
+	if errMsg == "" {
+		t.Fatal("越界写入应被拒绝")
+	}
+	_, errMsg = fileWrite(map[string]any{"path": "C:\\Windows\\escape.txt", "content": "x"})
+	if errMsg == "" {
+		t.Fatal("工作区外绝对路径写入应被拒绝")
+	}
 }
