@@ -693,6 +693,7 @@ def section_recall(
                 "sources": best.get("sources", []),
                 "fallback": used_fallback,
                 "content_length": len(content),
+                "rerank_score": best.get("rerank_score", 0.0),
             }
         )
 

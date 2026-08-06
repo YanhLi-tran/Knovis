@@ -3,6 +3,7 @@ module agent-go
 go 1.25.0
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/common v1.3.125
 	github.com/tencentcloud/tencentcloud-sdk-go/tencentcloud/wsa v1.3.125
 	gopkg.in/yaml.v3 v3.0.1
@@ -17,7 +18,6 @@ require (
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/grafana/pyroscope-go v1.3.0 // indirect
 	github.com/grafana/pyroscope-go/godeltaprof v0.1.10 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.27.7 // indirect

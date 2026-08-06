@@ -7,6 +7,9 @@ import (
 	"log"
 	"net/http"
 
+	"agent-go/internal/rag"
+
+	"github.com/google/uuid"
 )
 
 // ChatRequest 对话请求
@@ -110,6 +113,10 @@ func (s *Server) chatStream(c *GinCompat) {
 	ctx, cancel := context.WithCancel(c.Request().Context())
 	defer cancel()
 
+	// 生成 trace_id 并注入 context，供 rag client (X-Trace-Id header) 和 SSE 事件使用
+	traceID := uuid.New().String()[:8]
+	ctx = rag.WithTraceID(ctx, traceID)
+
 	// flusher 用于实时推送 SSE
 	flusher, ok := c.Writer().(http.Flusher)
 	if !ok {
@@ -121,21 +128,22 @@ func (s *Server) chatStream(c *GinCompat) {
 	c.Writer().WriteHeader(http.StatusOK)
 	fmt.Fprintf(c.Writer(), ": connected\n\n")
 	flusher.Flush()
-	log.Printf("[DEBUG][api] SSE 响应头已发送，连接已建立")
+	log.Printf("[DEBUG][api] SSE 响应头已发送，连接已建立 traceID=%s", traceID)
 
 	// 启动 OTACO 循环（传入 userID/client_id 与 projectID 用于记忆注入）
-	log.Printf("[INFO][api] chatStream 启动 OTACO sessionID=%s projectID=%s clientID=%s", req.SessionID, projectID, clientID)
+	log.Printf("[INFO][api] chatStream 启动 OTACO traceID=%s sessionID=%s projectID=%s clientID=%s", traceID, req.SessionID, projectID, clientID)
 	eventCh := s.orchestrator.Run(ctx, req.Query, apiKey, req.SessionID, clientID, projectID)
 
-	// 消费事件 channel，推送给前端
+	// 消费事件 channel，推送给前端（每个事件带 trace_id）
 	for event := range eventCh {
+		event.TraceID = traceID
 		data, err := json.Marshal(event)
 		if err != nil {
 			continue
 		}
 		fmt.Fprintf(c.Writer(), "data: %s\n\n", data)
 		flusher.Flush()
-		log.Printf("[DEBUG][api] SSE 已写入并 flush type=%s bytes=%d", event.Type, len(data))
+		log.Printf("[DEBUG][api] SSE 已写入并 flush type=%s bytes=%d traceID=%s", event.Type, len(data), traceID)
 	}
 
 }

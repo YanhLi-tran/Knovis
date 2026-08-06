@@ -18,7 +18,7 @@ import shutil
 from typing import List, Optional, Any
 
 import uvicorn
-from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
@@ -95,6 +95,8 @@ class RAGSearchResponse(BaseModel):
     fused_candidates: List[CandidateItem] = Field(default_factory=list)
     bm25_candidates: List[CandidateItem] = Field(default_factory=list)
     rag_candidates: List[CandidateItem] = Field(default_factory=list)
+    # 评测用:rerank 后的候选(仅 rerank 启用时非空,用于评测 rerank 对排序的影响)
+    reranked_candidates: List[CandidateItem] = Field(default_factory=list, description="rerank 后候选(rerank 未启用时为空)")
     # 评测用:分阶段耗时(毫秒),便于定位召回链路性能瓶颈
     embed_ms: int = Field(default=0, description="query 向量化耗时")
     bm25_ms: int = Field(default=0, description="BM25 检索耗时")
@@ -103,6 +105,8 @@ class RAGSearchResponse(BaseModel):
     rerank_ms: int = Field(default=0, description="rerank 耗长(未启用则为 0)")
     section_ms: int = Field(default=0, description="段落召回耗时")
     total_ms: int = Field(default=0, description="总耗时(= elapsed_ms,冗余字段便于语义清晰)")
+    # trace_id:用于跨服务追踪(agent-go → doc-service),非破坏性追加
+    trace_id: str = Field(default="", description="trace_id(agent-go 传入,便于跨服务追踪)")
 
 
 def _to_candidate(c: dict) -> CandidateItem:
@@ -326,7 +330,7 @@ def delete_doc(doc_id: int):
 # ==================== 检索(简历核心创新点) ====================
 
 @app.post("/rag/search", response_model=RAGSearchResponse)
-def rag_search(req: RAGSearchRequest):
+def rag_search(req: RAGSearchRequest, request: Request):
     """混合检索 + 段落级上下文召回.
 
     流程:query 向量化 → BM25(chunks FULLTEXT) top-20 + RAG(Chroma) top-20
@@ -335,6 +339,9 @@ def rag_search(req: RAGSearchRequest):
     from embedder_client import get_client
     from store import bm25_search, rag_search as store_rag, hybrid_fuse, section_recall
     from reranker import get_reranker
+
+    # 接收 trace_id 用于跨服务追踪(agent-go 透传)
+    trace_id = request.headers.get("X-Trace-Id", "")
 
     start = time.perf_counter()
     if not req.query.strip():
@@ -366,6 +373,7 @@ def rag_search(req: RAGSearchRequest):
     fuse_ms = int((time.perf_counter() - t0) * 1000)
     # 保留 rerank 前的融合候选副本(用于评测字段 fused_candidates)
     fused_before_rerank = list(fused)
+    reranked_candidates_list = []  # rerank 后候选(用于评测)
 
     # 4) [可选] rerank
     reranked = False
@@ -385,6 +393,7 @@ def rag_search(req: RAGSearchRequest):
         except Exception as e:
             logger.warning("rerank 失败(降级用融合结果): %s", e)
         rerank_ms = int((time.perf_counter() - t0) * 1000)
+        reranked_candidates_list = list(fused)  # 保存 rerank 后的候选
 
     # 5) 根据 strategy 选择段落召回的输入候选
     #    - bm25_only:仅 BM25 路(测 BM25 召回质量)
@@ -407,6 +416,9 @@ def rag_search(req: RAGSearchRequest):
 
     elapsed_ms = int((time.perf_counter() - start) * 1000)
     items = [RAGSearchResultItem(**r) for r in recalled]
+    if trace_id:
+        logger.info("[rag/search] trace_id=%s query=%s results=%d bm25=%d rag=%d reranked=%s elapsed=%dms",
+                     trace_id, req.query, len(items), len(bm25_results), len(rag_results), reranked, elapsed_ms)
     return RAGSearchResponse(
         results=items,
         bm25_count=len(bm25_results),
@@ -415,6 +427,7 @@ def rag_search(req: RAGSearchRequest):
         reranked=reranked,
         elapsed_ms=elapsed_ms,
         fused_candidates=[_to_candidate(c) for c in fused_before_rerank],
+        reranked_candidates=[_to_candidate(c) for c in reranked_candidates_list],
         bm25_candidates=[_to_candidate(c) for c in bm25_results],
         rag_candidates=[_to_candidate(c) for c in rag_results],
         embed_ms=embed_ms,
@@ -424,6 +437,7 @@ def rag_search(req: RAGSearchRequest):
         rerank_ms=rerank_ms,
         section_ms=section_ms,
         total_ms=elapsed_ms,
+        trace_id=trace_id,
     )
 
 

@@ -20,8 +20,9 @@ import (
 
 // SSEEvent SSE 事件（推送给前端）
 type SSEEvent struct {
-	Type string         `json:"type"`
-	Data map[string]any `json:"data"`
+	Type    string         `json:"type"`
+	Data    map[string]any `json:"data"`
+	TraceID string         `json:"trace_id,omitempty"`
 }
 
 // Orchestrator OTACO 编排器

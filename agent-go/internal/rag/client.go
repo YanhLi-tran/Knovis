@@ -68,9 +68,10 @@ type SearchResponse struct {
 	Results []DocSearchResult `json:"results"`
 	SearchStats
 	// 评测用:融合前完整候选(段落扩展前 top-20),非破坏性追加
-	FusedCandidates []CandidateItem `json:"fused_candidates"`
-	BM25Candidates  []CandidateItem `json:"bm25_candidates"`
-	RAGCandidates   []CandidateItem `json:"rag_candidates"`
+	FusedCandidates    []CandidateItem `json:"fused_candidates"`
+	RerankedCandidates []CandidateItem `json:"reranked_candidates"`
+	BM25Candidates     []CandidateItem `json:"bm25_candidates"`
+	RAGCandidates      []CandidateItem `json:"rag_candidates"`
 }
 
 // Document 文档元信息(与 storage.Document 对齐,但用 JSON tag)
@@ -103,6 +104,24 @@ type DeleteResult struct {
 	Deleted bool `json:"deleted"`
 	Chunks  int  `json:"chunks"`
 	Vectors int  `json:"vectors"`
+}
+
+// traceIDKey 是 context 中 trace_id 的 key 类型
+type traceIDKeyType struct{}
+
+var traceIDKey = traceIDKeyType{}
+
+// WithTraceID 将 trace_id 注入 context，供下游 rag client 和 orchestrator 使用
+func WithTraceID(ctx context.Context, traceID string) context.Context {
+	return context.WithValue(ctx, traceIDKey, traceID)
+}
+
+// TraceIDFromContext 从 context 提取 trace_id，不存在则返回空串
+func TraceIDFromContext(ctx context.Context) string {
+	if v, ok := ctx.Value(traceIDKey).(string); ok {
+		return v
+	}
+	return ""
 }
 
 // DocClient doc-service HTTP 客户端
@@ -261,6 +280,9 @@ func (c *DocClient) postJSON(ctx context.Context, path string, body any, out any
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if traceID, ok := ctx.Value(traceIDKey).(string); ok && traceID != "" {
+		req.Header.Set("X-Trace-Id", traceID)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("调用 doc-service %s 失败: %w", path, err)
