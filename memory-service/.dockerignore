@@ -1,0 +1,20 @@
+﻿# Docker 构建忽略文件（避免敏感信息和不必要文件打入镜像）
+.env
+.env.local
+.env.*.local
+.git
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+.vscode/
+.idea/
+*.log
+*.md
+Dockerfile
+.dockerignore
+data/
+models/

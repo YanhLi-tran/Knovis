@@ -1,4 +1,89 @@
-# Knovis - 用户与动态数据服务
+# Knovis - 企业级智能知识助手
+
+> Agent 系统（agent-go）+ RAG 文档检索（doc-service）+ 记忆服务（memory-service）+ 用户/动态数据服务（Knovis）
+
+## 一键启动（Docker Compose）
+
+整套系统通过 `docker-compose.yml` 一键拉起 6 个服务（MySQL / Redis / Chroma / memory-service / doc-service / agent-go）。
+
+### 前置准备
+
+```bash
+# 1. 复制环境变量配置
+cp .env.docker.example .env
+
+# 2. 编辑 .env，按需修改（必改项）：
+#    - MYSQL_ROOT_PASSWORD   MySQL 密码
+#    - LLM_API_KEY           DeepSeek API Key
+#    - JWT_SECRET            JWT 密钥（与 Knovis 服务一致）
+#    - MASTER_KEY_V1         AES-256-GCM 主密钥
+#    - EMBEDDING_MODEL_PATH  bge-large-zh 模型路径
+#    - RERANK_ENABLED        是否启用 rerank（true/false）
+#    - RERANK_MODEL_HOST_PATH  rerank 模型路径（RERANK_ENABLED=true 时）
+
+# 3. （可选）若有已有 Chroma 向量数据，复制到对应目录避免重新 embedding：
+#    cp -r /path/to/chroma-doc  ./data/chroma-doc     # doc-service 的 18801 chunks
+#    cp -r /path/to/chroma-mem  ./data/chroma-memory   # memory-service 的记忆向量
+```
+
+### 启动
+
+```bash
+# 一键启动全部 6 个服务（首次会自动构建镜像 + 初始化数据库）
+docker-compose up -d
+
+# 查看服务状态（等待全部 healthy）
+docker-compose ps
+
+# 查看 agent-go 日志
+docker-compose logs -f agent-go
+```
+
+### 验证
+
+```bash
+# 健康检查（三个核心服务）
+curl http://localhost:8001/health   # agent-go
+curl http://localhost:8002/health   # memory-service
+curl http://localhost:8003/health   # doc-service
+
+# RAG 检索测试
+curl -X POST http://localhost:8003/rag/search \
+  -H "Content-Type: application/json" \
+  -d '{"query": "五粮液 2021 营业收入", "top_k": 5}'
+```
+
+### 服务端口
+
+| 服务 | 端口 | 说明 |
+| --- | --- | --- |
+| agent-go | 8001 | Go 主服务（OTACO 编排 + FC 工具 + SSE 流式对话） |
+| memory-service | 8002 | Python 记忆服务（embedding + 混合检索） |
+| doc-service | 8003 | Python RAG 文档服务（BM25 + 向量 + rerank） |
+| MySQL | 3306 | 数据库（agent_go + knovis 两个库） |
+| Redis | 6379 | 缓存 + token 黑名单 |
+| Chroma | 8000 | 向量库服务（备用，当前嵌入式模式） |
+
+### 注意事项
+
+- **Knovis 用户服务（8080）** 不入 Docker，需单独启动：`cd service/userapi && go run user.go`
+- **local-agent 客户端** 不入 Docker（需访问宿主机文件系统执行 file/sandbox 工具）
+- **模型文件** 通过 volume 挂载，不打入镜像（避免镜像过大）
+- **年报数据** 挂载到 doc-service 的 `/app/data/uploads`，不自动导入
+
+### 停止与清理
+
+```bash
+# 停止全部服务
+docker-compose down
+
+# 停止并删除数据卷（⚠️ 清空数据库和向量数据）
+docker-compose down -v
+```
+
+---
+
+## Knovis 用户与动态数据服务
 
 基于 **go-zero** 框架重写的「用户 + 动态」内容空间后端（仿照 AIWallHub，仅保留用户与动态两个模块）。
 

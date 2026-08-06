@@ -1,0 +1,19 @@
+﻿# Docker 构建忽略文件（避免敏感信息和不必要文件打入镜像）
+# .env 含 LLM_API_KEY/JWT_SECRET/MASTER_KEY_V1 等敏感信息，严禁打入镜像
+.env
+.env.local
+.env.*.local
+.git
+.gitignore
+data/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.vscode/
+.idea/
+*.exe
+*.test
+*.log
+Dockerfile
+.dockerignore
