@@ -15,6 +15,10 @@ type UserConfig struct {
 	Location   string         `gorm:"type:varchar(128);comment:用户位置（城市/时区）" json:"location"`            // 例: Asia/Shanghai
 	Preferences string       `gorm:"type:text;comment:偏好JSON（语言/风格/UI等）" json:"preferences"`           // JSON
 	RawText    string         `gorm:"type:text;comment:拼好的档案文本（便于直接注入system prompt）" json:"raw_text"` // 冗余字段，避免每次拼装
+	// P9: Agent 行为设置（用户可配，覆盖全局默认）
+	MaxToolRounds int    `gorm:"default:0;comment:连续调用工具轮数上限（0=用全局默认10，范围1-50）" json:"max_tool_rounds"`
+	SandboxMode   string `gorm:"type:varchar(16);default:'';comment:沙箱权限模式 ask/auto/yolo（空=ask）" json:"sandbox_mode"`
+	BackupMode    string `gorm:"type:varchar(16);default:'';comment:文件备份模式 snapshot/git（空=snapshot）" json:"backup_mode"`
 	CreatedAt  time.Time      `gorm:"comment:创建时间" json:"created_at"`
 	UpdatedAt  time.Time      `gorm:"comment:更新时间" json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index;comment:软删除时间" json:"deleted_at"`

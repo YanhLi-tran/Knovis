@@ -1305,6 +1305,9 @@
         .form-input:focus, .form-textarea:focus, .form-select:focus { border-color: var(--primary-light); box-shadow: var(--glow-primary); background: rgba(255, 255, 255, 0.95); }
         .form-textarea { resize: vertical; min-height: 80px; line-height: 1.6; }
         .form-help { margin-top: 6px; font-size: 11.5px; color: var(--text-muted); line-height: 1.6; }
+        .radio-label { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
+        .radio-label input { accent-color: var(--accent); }
+        .radio-label .form-help { margin-top: 0; }
         .form-help a { color: var(--accent); text-decoration: none; }
         .form-help a:hover { text-decoration: underline; }
         .form-row { display: flex; gap: 10px; }
@@ -2285,6 +2288,25 @@
                 <div class="form-group">
                     <label class="form-label">偏好</label>
                     <textarea class="form-textarea" id="ucPreferences" placeholder="如：偏好简洁回答，关注数据准确性"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">连续工具轮数上限 <span class="opt">模型可连续调用工具的轮数（1~50，默认 10）</span></label>
+                    <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">沙箱权限模式</label>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="ask" checked /> 询问 <span class="form-help" style="display:inline;">需审批的工具每次询问</span></label>
+                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="auto" /> 自动 <span class="form-help" style="display:inline;">需审批的工具自动批准</span></label>
+                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="yolo" /> YOLO <span class="form-help" style="display:inline;">全自动+高危命令放行+删除备份</span></label>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">文件备份方式 <span class="opt">YOLO 模式生效</span></label>
+                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+                        <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照备份 <span class="form-help" style="display:inline;">操作前复制到 .backup/</span></label>
+                        <label class="radio-label"><input type="radio" name="ucBackupMode" value="git" /> Git 版本控制 <span class="form-help" style="display:inline;">workspace 用 git 自动提交</span></label>
+                    </div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">原始文本 <span class="opt">可选，便于直接注入</span></label>
@@ -4226,13 +4248,29 @@ async function loadUserConfig() {
                 $('ucLocation').value = uc.location || '';
                 $('ucPreferences').value = uc.preferences || '';
                 $('ucRawText').value = uc.raw_text || '';
+                $('ucMaxToolRounds').value = uc.max_tool_rounds || 0;
+                const sm = uc.sandbox_mode || 'ask';
+                document.querySelectorAll('input[name="ucSandboxMode"]').forEach(r => { r.checked = (r.value === sm); });
+                const bm = uc.backup_mode || 'snapshot';
+                document.querySelectorAll('input[name="ucBackupMode"]').forEach(r => { r.checked = (r.value === bm); });
             }
         }
     } catch (e) {}
 }
 
 async function saveUserConfig() {
-    const body = { basic_info: $('ucBasicInfo').value.trim(), location: $('ucLocation').value.trim(), preferences: $('ucPreferences').value.trim(), raw_text: $('ucRawText').value.trim() };
+    const rounds = parseInt($('ucMaxToolRounds').value || '0', 10);
+    const sandboxMode = document.querySelector('input[name="ucSandboxMode"]:checked')?.value || 'ask';
+    const backupMode = document.querySelector('input[name="ucBackupMode"]:checked')?.value || 'snapshot';
+    const body = {
+        basic_info: $('ucBasicInfo').value.trim(),
+        location: $('ucLocation').value.trim(),
+        preferences: $('ucPreferences').value.trim(),
+        raw_text: $('ucRawText').value.trim(),
+        max_tool_rounds: Math.min(Math.max(rounds || 0, 0), 50),
+        sandbox_mode: sandboxMode,
+        backup_mode: backupMode,
+    };
     const btn = $('userConfigSave');
     btn.disabled = true; btn.textContent = '保存中...';
     try {

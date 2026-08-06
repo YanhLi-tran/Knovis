@@ -119,6 +119,9 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		// P8: 解析当前会话上下文（会话标题 + 所属项目名），供 skill（如 kb_summary 输出文档目录）使用
 		sessionTitle, projectName := o.resolveSessionContext(sessionID, projectID)
 
+		// P9: 加载用户 Agent 行为设置（连续工具轮上限 / 沙箱权限模式 / 备份模式，覆盖全局默认）
+		behavior := o.loadUserBehavior(userID)
+
 		// 组装 system prompt（skill 注册表在此注入，静态，一次性构建）
 		systemPrompt := o.buildSystemPrompt(memoryBlock, userID, sessionTitle, projectName)
 		// toolDefs 在 OTACO 循环内每轮构建：load_skill 执行后下一轮需包含新加载的 skill 工具
@@ -196,6 +199,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 	}
 
 	consecutiveErrors := 0
+	consecutiveToolRounds := 0 // P9: 连续调用工具轮数（assistant 无文本且仅工具调用时累加，有文本重置）
 	toolRetryCount := map[string]int{} // 工具调用 ID -> 已重试次数
 	// 历史消息快照栈（用于 rollback）
 	var messageHistoryStack [][]llm.Message
@@ -323,6 +327,20 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			continue
 		}
 
+		// P9: 连续工具轮计数（assistant 无文本内容且仅调用工具 → 连续工具轮累加；有文本/最终答案则重置）
+		if cleanedContent == "" && len(toolCalls) > 0 {
+			consecutiveToolRounds++
+			maxRounds := behavior.EffectiveMaxToolRounds()
+			if consecutiveToolRounds > maxRounds {
+				log.Printf("[ERROR][otaco] 连续工具调用轮数超限 rounds=%d max=%d userID=%s", consecutiveToolRounds, maxRounds, userID)
+				ch <- errorEvent("max_tool_rounds",
+					fmt.Sprintf("已连续调用工具 %d 轮，超过上限 %d（可在「用户配置」中调整连续工具轮数）", consecutiveToolRounds, maxRounds))
+				return
+			}
+		} else {
+			consecutiveToolRounds = 0
+		}
+
 		// Act: 执行工具
 		hasToolError := false
 		var toolResults []toolResultRecord // 用于持久化
@@ -341,7 +359,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 				}
 			}
 
-			results := o.processToolCalls(ctx, ch, toolCalls, sessionID, resolvedKey, provider)
+			results := o.processToolCalls(ctx, ch, toolCalls, sessionID, resolvedKey, provider, behavior)
 
 		// Check: 检查结果
 		ch <- SSEEvent{Type: "thought", Data: map[string]any{"stage": "check"}}
@@ -486,13 +504,20 @@ func (o *Orchestrator) callLLMStream(ctx context.Context, provider llm.Provider,
 
 // processToolCalls 处理工具调用（普通工具并行 + ask_user/summarize_history/load_skill 特殊处理 + skill 工具分流）
 // sessionID/apiKey/provider 用于 summarize_history 工具执行压缩 + skill 工具按会话隔离执行
-func (o *Orchestrator) processToolCalls(ctx context.Context, ch chan<- SSEEvent, calls []llm.ToolCall, sessionID string, apiKey string, provider llm.Provider) []tools.ToolResult {
+func (o *Orchestrator) processToolCalls(ctx context.Context, ch chan<- SSEEvent, calls []llm.ToolCall, sessionID string, apiKey string, provider llm.Provider, behavior storage.AgentBehavior) []tools.ToolResult {
 	var normalCalls []llm.ToolCall        // 主 registry 工具（免审批 + 需审批）
 	var skillCalls []llm.ToolCall         // P4: session 已加载的 skill 工具
 	var results []tools.ToolResult
 
 	// userID 从 ctx 取（load_skill 需按用户绑定工具 Handler）
 	userID, _ := ctx.Value(tools.CtxKeyUserID).(string)
+
+	// P9: yolo 模式下为 sandbox_exec 注入透传标记（local-agent 据此跳过白名单并做备份留痕）
+	if behavior.EffectiveSandboxMode() == "yolo" {
+		for i := range calls {
+			injectYoloArgs(&calls[i], behavior)
+		}
+	}
 
 	for _, call := range calls {
 		// 推送 tool_call 事件
@@ -539,11 +564,14 @@ func (o *Orchestrator) processToolCalls(ctx context.Context, ch chan<- SSEEvent,
 
 	// P4: 分类主 registry 工具 —— 免审批（并行执行）vs 需审批（逐个审批后执行）
 	// 审批流放执行层：写操作/危险工具在执行 Handler 前走审批（SSE waiting_approval），不占 LLM context
+	// P9: auto/yolo 模式下需审批工具自动放行（跳过审批交互）
 	var freeCalls, approvalCalls []llm.ToolCall
+	autoApprove := behavior.IsAutoApprove()
 	for _, call := range normalCalls {
 		tool, ok := o.registry.Get(call.Function.Name)
-		log.Printf("[DEBUG][otaco] 分类工具 name=%s found=%v needsApproval=%v", call.Function.Name, ok, ok && tool.NeedsApproval)
-		if ok && tool.NeedsApproval {
+		needsApproval := ok && tool.NeedsApproval && !autoApprove
+		log.Printf("[DEBUG][otaco] 分类工具 name=%s found=%v needsApproval=%v(autoApprove=%v)", call.Function.Name, ok, needsApproval, autoApprove)
+		if needsApproval {
 			approvalCalls = append(approvalCalls, call)
 		} else {
 			freeCalls = append(freeCalls, call)
@@ -909,6 +937,42 @@ func (o *Orchestrator) resolveSessionContext(sessionID, projectID string) (sessi
 		}
 	}
 	return sessionTitle, projectName
+}
+
+// loadUserBehavior 加载用户 Agent 行为设置（P9）
+// 读 UserConfig 中 MaxToolRounds / SandboxMode / BackupMode；无配置时返回默认（全局兜底）
+func (o *Orchestrator) loadUserBehavior(userID string) storage.AgentBehavior {
+	if userID == "" || o.persister == nil || o.persister.repos == nil {
+		return storage.AgentBehavior{}
+	}
+	uc, err := o.persister.repos.UserConfig.GetByUserID(userID)
+	if err != nil || uc == nil {
+		return storage.AgentBehavior{}
+	}
+	return uc.Behavior()
+}
+
+// injectYoloArgs 为需透传的工具注入 yolo 标记（P9）
+// sandbox_exec / file_write：local-agent 收到 _yolo=true 后跳过白名单（命令）并做备份留痕；
+// _backup_mode 指定备份方式（snapshot/git），危险操作（删除/覆盖）执行前先备份到 .backup/，实现可回退
+func injectYoloArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
+	switch call.Function.Name {
+	case "sandbox_exec", "file_write":
+	default:
+		return
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+		return
+	}
+	args["_yolo"] = true
+	args["_backup_mode"] = behavior.EffectiveBackupMode()
+	b, err := json.Marshal(args)
+	if err != nil {
+		return
+	}
+	call.Function.Arguments = string(b)
+	log.Printf("[INFO][otaco] yolo 模式注入工具 %s 透传标记 backup_mode=%s", call.Function.Name, behavior.EffectiveBackupMode())
 }
 
 // buildTools 构建工具定义列表（含 ask_user + load_skill + session 已加载 skill 工具）

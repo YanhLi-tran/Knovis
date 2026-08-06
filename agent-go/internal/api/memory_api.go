@@ -239,6 +239,10 @@ type UpsertUserConfigRequest struct {
 	Location    string `json:"location,omitempty"`
 	Preferences string `json:"preferences,omitempty"`
 	RawText     string `json:"raw_text,omitempty"` // 可选，便于直接注入
+	// P9: Agent 行为设置
+	MaxToolRounds int    `json:"max_tool_rounds,omitempty"` // 连续工具轮上限（0=全局默认10）
+	SandboxMode   string `json:"sandbox_mode,omitempty"`    // ask/auto/yolo
+	BackupMode    string `json:"backup_mode,omitempty"`     // snapshot/git
 }
 
 // upsertUserConfig PUT /memory/user-config
@@ -254,11 +258,14 @@ func (s *Server) upsertUserConfig(c *GinCompat) {
 		return
 	}
 	uc := &storage.UserConfig{
-		UserID:      userID,
-		BasicInfo:   req.BasicInfo,
-		Location:    req.Location,
-		Preferences: req.Preferences,
-		RawText:     req.RawText,
+		UserID:        userID,
+		BasicInfo:     req.BasicInfo,
+		Location:      req.Location,
+		Preferences:   req.Preferences,
+		RawText:       req.RawText,
+		MaxToolRounds: req.MaxToolRounds,
+		SandboxMode:   req.SandboxMode,
+		BackupMode:    req.BackupMode,
 	}
 	if err := s.repos.UserConfig.Upsert(uc); err != nil {
 		log.Printf("[ERROR][api] upsertUserConfig 失败 userID=%s err=%v", userID, err)
