@@ -47,9 +47,10 @@ func (s *UserSkill) ScriptsList() ([]ScriptFile, error) {
 }
 
 // SetScripts 序列化 scripts 列表为 JSON
+// MySQL JSON 列不接受空字符串，空列表存 "[]"（合法 JSON）
 func (s *UserSkill) SetScripts(list []ScriptFile) error {
 	if len(list) == 0 {
-		s.Scripts = ""
+		s.Scripts = "[]"
 		return nil
 	}
 	b, err := json.Marshal(list)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -48,10 +49,27 @@ func (s *Server) uploadUserSkill(c *GinCompat) {
 		return
 	}
 
-	name := strings.TrimSpace(c.Request().FormValue("name"))
-	description := strings.TrimSpace(c.Request().FormValue("description"))
-	trigger := strings.TrimSpace(c.Request().FormValue("trigger"))
-	body := strings.TrimSpace(c.Request().FormValue("content_md"))
+	// 注意：c.Request() 每次调用返回 WithContext 的新 clone（Body 共享但 Form 缓存独立），
+	// 多次调用会导致 body 被首次消费后后续字段读不到。必须只取一次 r 并统一解析。
+	// multipart 与 urlencoded 解析路径不同：ParseForm 不解析 multipart 字段（且会初始化空的
+	// r.Form 导致 FormValue 不再触发 ParseMultipartForm），必须按 Content-Type 走对应解析。
+	r := c.Request()
+	raw, _ := io.ReadAll(r.Body)
+	r.Body = io.NopCloser(bytes.NewBuffer(raw))
+	if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			c.JSON(http.StatusBadRequest, H{"error": "表单解析失败: " + err.Error()})
+			return
+		}
+	} else if err := r.ParseForm(); err != nil {
+		c.JSON(http.StatusBadRequest, H{"error": "表单解析失败: " + err.Error()})
+		return
+	}
+
+	name := strings.TrimSpace(r.FormValue("name"))
+	description := strings.TrimSpace(r.FormValue("description"))
+	trigger := strings.TrimSpace(r.FormValue("trigger"))
+	body := strings.TrimSpace(r.FormValue("content_md"))
 
 	// 校验
 	if !skillNameRe.MatchString(name) {
@@ -76,8 +94,8 @@ func (s *Server) uploadUserSkill(c *GinCompat) {
 		return
 	}
 
-	// 解析 scripts 文件（多文件，统一存 scripts/<basename>）
-	scripts, err := s.parseScriptFiles(c)
+	// 解析 scripts 文件（多文件，统一存 scripts/<basename>；复用已解析的 r，避免 clone 丢字段）
+	scripts, err := s.parseScriptFiles(r)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, H{"error": "解析脚本失败: " + err.Error()})
 		return
@@ -130,15 +148,22 @@ func toStorageScripts(list []skill.SkillScript) []storage.ScriptFile {
 
 // parseScriptFiles 从 multipart 表单读取 scripts 文件
 // 文件名仅取 basename（防路径穿越），统一存 scripts/<basename>；SKILL.md 正文引用该路径
-func (s *Server) parseScriptFiles(c *GinCompat) ([]skill.SkillScript, error) {
-	if err := c.Request().ParseMultipartForm(10 << 20); err != nil {
-		return nil, fmt.Errorf("解析表单失败: %w", err)
+// 注意：必须传入 uploadUserSkill 中已解析的同一 r（c.Request() 多次调用会因 clone 机制丢字段）
+func (s *Server) parseScriptFiles(r *http.Request) ([]skill.SkillScript, error) {
+	// 非 multipart 请求（纯表单字段）直接返回无脚本
+	if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+		return nil, nil
 	}
-	if c.Request().MultipartForm == nil || len(c.Request().MultipartForm.File) == 0 {
+	if r.MultipartForm == nil {
+		if err := r.ParseMultipartForm(10 << 20); err != nil {
+			return nil, fmt.Errorf("解析表单失败: %w", err)
+		}
+	}
+	if len(r.MultipartForm.File) == 0 {
 		return nil, nil
 	}
 	var scripts []skill.SkillScript
-	for _, headers := range c.Request().MultipartForm.File {
+	for _, headers := range r.MultipartForm.File {
 		for _, h := range headers {
 			base := filepath.Base(h.Filename)
 			if base == "" || base == "." || base == "/" || base == "\\" {
