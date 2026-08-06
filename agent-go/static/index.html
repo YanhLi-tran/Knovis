@@ -2033,6 +2033,46 @@
         </div>
     </div>
 
+    <!-- 本地 Agent 引导 Modal -->
+    <div class="modal-backdrop" id="localAgentModal">
+        <div class="modal-dialog" style="max-width:560px;">
+            <div class="modal-header">
+                <div class="modal-icon">🖥️</div>
+                <div class="modal-titles">
+                    <h3>本地 Agent</h3>
+                    <div class="modal-sub">文件读写 / grep / 沙箱执行的本地执行器（运行在你这台电脑上）</div>
+                </div>
+                <button class="modal-close" data-close-modal="localAgentModal">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:rgba(99,102,241,0.06);margin-bottom:16px;">
+                    <span>连接状态：</span><strong id="laStatus" style="font-size:13px;">检测中...</strong>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">下载客户端</label>
+                    <a id="laDownloadBtn" href="#" target="_blank" rel="noopener" class="btn btn-primary btn-sm">⬇ 前往下载页面</a>
+                    <div class="form-help" id="laVersion" style="margin-top:6px;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">选择你的平台</label>
+                    <div id="laPlatforms" style="display:flex;flex-direction:column;gap:6px;"></div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">启动步骤</label>
+                    <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text-secondary);line-height:1.9;">
+                        <li>下载并解压对应你系统的 local-agent 文件</li>
+                        <li>双击运行（Windows 为 <code>.exe</code>），保持窗口常开</li>
+                        <li>回到本页面重新登录（或刷新），登录后会自动激活并绑定当前账号</li>
+                        <li>部署在服务器时需指定：<code>local-agent --server ws://服务器IP:8001</code>（可选 <code>--workdir</code> 指定工作目录）</li>
+                    </ol>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="laClose">关闭</button>
+            </div>
+        </div>
+    </div>
+
     <!-- 设置 Modal -->
     <div class="modal-backdrop" id="settingsModal">
         <div class="modal-dialog">
@@ -2263,6 +2303,9 @@ const State = {
     ws: null,
     wsReconnectAttempts: 0,
     wsReconnectTimer: null,
+    // 本地 Agent（文件/沙箱执行器）状态与下载引导
+    localAgentStatus: 'unknown', // unknown / connected / disconnected
+    localAgentInfo: null,        // /agent/local/info 缓存
 };
 
 const KNOVIS_BASE = '';  // Knovis 登录经 agent-go 反向代理(同源 /api/auth/login)
@@ -2529,6 +2572,72 @@ function dismissLoginModal() {
 /* ========================================================================
  * 鉴权模块
  * ====================================================================== */
+// ==================== 本地 Agent（文件/沙箱执行器）状态与引导 ====================
+
+// localAgentStatusText 状态徽标文案
+function localAgentStatusText() {
+    if (State.localAgentStatus === 'connected') return '已连接';
+    if (State.localAgentStatus === 'disconnected') return '未连接';
+    return '状态未知';
+}
+
+// updateLocalAgentBadge 更新下拉菜单徽标 + 引导弹窗状态行
+function updateLocalAgentBadge() {
+    const badge = $('localAgentBadge');
+    if (badge) badge.textContent = localAgentStatusText();
+    const st = $('laStatus');
+    if (st) {
+        st.textContent = localAgentStatusText();
+        st.style.color = State.localAgentStatus === 'connected' ? '#22c55e' : '#ef4444';
+    }
+}
+
+// checkLocalAgentStatus 检测本地 local-agent 控制服务是否在线（GET /status，本地端口）
+// 不轮询：仅在激活、打开引导弹窗、以及对话开始时惰性检查一次
+async function checkLocalAgentStatus() {
+    try {
+        const resp = await fetch('http://127.0.0.1:17000/status', { cache: 'no-store' });
+        if (resp.ok) {
+            const data = await resp.json();
+            State.localAgentStatus = data.connected ? 'connected' : 'disconnected';
+        } else {
+            State.localAgentStatus = 'disconnected';
+        }
+    } catch (e) {
+        State.localAgentStatus = 'disconnected'; // 本地控制服务未运行
+    }
+    updateLocalAgentBadge();
+    return State.localAgentStatus;
+}
+
+// loadLocalAgentInfo 加载下载引导信息（/agent/local/info，下载地址后端可配置）
+async function loadLocalAgentInfo() {
+    if (State.localAgentInfo) return;
+    try {
+        const resp = await fetch('/agent/local/info');
+        if (resp.ok) State.localAgentInfo = await resp.json();
+    } catch (e) {}
+}
+
+// openLocalAgentModal 打开本地 Agent 引导弹窗（实时刷新连接状态）
+async function openLocalAgentModal() {
+    openModal('localAgentModal');
+    await loadLocalAgentInfo();
+    renderLocalAgentModal();
+    await checkLocalAgentStatus();
+}
+
+// renderLocalAgentModal 渲染下载信息
+function renderLocalAgentModal() {
+    const info = State.localAgentInfo;
+    if (!info) return;
+    $('laVersion').textContent = '当前版本 ' + info.version + ' · 本地控制服务 ' + info.local_ctrl_addr;
+    $('laDownloadBtn').href = info.download_url;
+    $('laPlatforms').innerHTML = info.platforms.map(p =>
+        '<div style="display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-radius:6px;background:rgba(0,0,0,0.03);border:1px solid rgba(128,128,128,0.12);"><code style="font-size:11.5px;">' + escapeHtml(p.file) + '</code><span style="font-size:12px;color:var(--text-secondary);">' + escapeHtml(p.note) + '</span></div>'
+    ).join('');
+}
+
 // activateLocalAgent 登录/注册成功后激活本机 local-agent
 // 把当前用户 token 推给本地控制服务(127.0.0.1:17000)，local-agent 用该 token 连接
 // agent-go——userID 始终与当前登录用户一致，文件/沙箱工具按用户路由不会失配
@@ -2539,9 +2648,20 @@ function activateLocalAgent(token) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ token })
     }).then(resp => {
-        if (resp.ok) toast('success', '本地 Agent 已连接', '文件写入/沙箱执行可用');
+        if (resp.ok) {
+            State.localAgentStatus = 'connected';
+            updateLocalAgentBadge();
+            toast('success', '本地 Agent 已连接', '文件写入/沙箱执行可用');
+        } else {
+            State.localAgentStatus = 'disconnected';
+            updateLocalAgentBadge();
+            toast('warning', '本地 Agent 未连接', '点击右上角头像 → 本地 Agent 查看下载与启动说明');
+        }
     }).catch(() => {
-        // local-agent 未运行：静默，不打扰登录流程（可自行启动 local-agent.exe 后重新登录触发）
+        // local-agent 未运行：提示引导，不打断登录流程
+        State.localAgentStatus = 'disconnected';
+        updateLocalAgentBadge();
+        toast('info', '本地 Agent 未启动', '文件写入功能需要本机运行 local-agent，点击右上角头像 → 本地 Agent 查看下载与启动说明');
     });
 }
 
@@ -2640,7 +2760,7 @@ function updateUserUI() {
         keyStatusEl.textContent = '✓ 已登录';
         keyStatusEl.classList.remove('missing');
         if (State.hasLLMKey) { $('apiKeyBtn').classList.add('has-key'); }
-        dropdown.innerHTML = '<div class="user-dropdown-header"><div class="ud-name">' + escapeHtml(name) + '</div><div class="ud-mail">' + escapeHtml(email) + '</div></div><div class="user-dropdown-item" data-action="knovis-token"><span class="udi-icon">🎫</span> Knovis Token <span class="udi-badge">' + (State.hasKnovisToken ? '已设置' : '未设置') + '</span></div><div class="user-dropdown-item" data-action="user-config"><span class="udi-icon">👤</span> 用户配置</div><div class="user-dropdown-item" data-action="settings"><span class="udi-icon">⚙️</span> 设置</div><div class="user-dropdown-item danger" data-action="logout"><span class="udi-icon">🚪</span> 登出</div>';
+        dropdown.innerHTML = '<div class="user-dropdown-header"><div class="ud-name">' + escapeHtml(name) + '</div><div class="ud-mail">' + escapeHtml(email) + '</div></div><div class="user-dropdown-item" data-action="knovis-token"><span class="udi-icon">🎫</span> Knovis Token <span class="udi-badge">' + (State.hasKnovisToken ? '已设置' : '未设置') + '</span></div><div class="user-dropdown-item" data-action="user-config"><span class="udi-icon">👤</span> 用户配置</div><div class="user-dropdown-item" data-action="local-agent"><span class="udi-icon">🖥️</span> 本地 Agent <span class="udi-badge" id="localAgentBadge">' + localAgentStatusText() + '</span></div><div class="user-dropdown-item" data-action="settings"><span class="udi-icon">⚙️</span> 设置</div><div class="user-dropdown-item danger" data-action="logout"><span class="udi-icon">🚪</span> 登出</div>';
     } else {
         avatar.textContent = '?';
         avatar.classList.add('guest');
@@ -3067,6 +3187,8 @@ async function sendMessage() {
     if (!query || State.isStreaming) return;
     if (!State.token) { openLoginModal(); return; }
     if (!State.hasLLMKey) { toast('warning', '需要 LLM Key', '请先配置 LLM API Key'); openModal('apiKeyModal'); return; }
+    // 惰性检测 local-agent 状态（不轮询：仅在显示"已连接"时检查一次，掉线则徽标更新为未连接）
+    if (State.localAgentStatus === 'connected') checkLocalAgentStatus();
     if (!State.currentSessionId) {
         try {
             const resp = await apiFetch('/sessions', { method: 'POST', body: JSON.stringify({ title: '', project_id: State.currentProjectId }) });
@@ -3821,6 +3943,7 @@ function bindEvents() {
         else if (action === 'logout') doLogout();
         else if (action === 'knovis-token') { openModal('knovisTokenModal'); loadKnovisTokenStatus(); }
         else if (action === 'user-config') { openModal('userConfigModal'); loadUserConfig(); }
+        else if (action === 'local-agent') { openLocalAgentModal(); }
         else if (action === 'settings') { openModal('settingsModal'); loadKnovisTokenStatus(); }
     });
 
@@ -3836,6 +3959,9 @@ function bindEvents() {
     $('registerSubmit').onclick = doRegister;
     $('registerCancel').onclick = () => closeModal('registerModal');
     $('registerConfirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
+
+    // 本地 Agent 引导弹窗
+    $('laClose').onclick = () => closeModal('localAgentModal');
 
     $('apiKeySave').onclick = saveLLMKey;
     $('apiKeyDelete').onclick = deleteLLMKey;
@@ -3910,6 +4036,7 @@ async function init() {
     if (State.token) {
         await loadUserInfo();
         if (State.token) { loadProjects(); loadSessions(); connectWS(); }
+        checkLocalAgentStatus(); // 页面加载时同步一次本地 Agent 状态（下拉菜单徽标）
     } else {
         updateUserUI();
         loadProjects();
