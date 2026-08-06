@@ -54,6 +54,10 @@ memory-service/models/
 # 评测脚本本地状态(评测 token, 不入库)
 scripts/.eval_token
 
+# 评测脚本本地密钥(含真实 LLM API Key, 不入库)
+scripts/_eval_env.ps1
+scripts/*_eval_env*
+
 # 临时文件
 *.tmp
 *.swp
