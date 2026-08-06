@@ -1308,6 +1308,13 @@
         .radio-label { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--text-secondary); cursor: pointer; }
         .radio-label input { accent-color: var(--accent); }
         .radio-label .form-help { margin-top: 0; }
+        /* 聊天框沙箱模式切换按钮 */
+        .sandbox-mode-btn { flex: 0 0 auto; padding: 0 10px; height: 36px; border-radius: 10px; border: 1px solid var(--border); background: rgba(99,102,241,0.08); color: var(--accent); font-size: 12.5px; cursor: pointer; white-space: nowrap; transition: all .15s; }
+        .sandbox-mode-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(99,102,241,0.2); }
+        .sandbox-mode-btn.mode-auto { background: rgba(16,185,129,0.1); border-color: rgba(16,185,129,0.4); color: #10b981; }
+        .sandbox-mode-btn.mode-auto:hover { box-shadow: 0 4px 14px rgba(16,185,129,0.25); }
+        .sandbox-mode-btn.mode-yolo { background: rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.45); color: #ef4444; }
+        .sandbox-mode-btn.mode-yolo:hover { box-shadow: 0 4px 14px rgba(239,68,68,0.25); }
         .form-help a { color: var(--accent); text-decoration: none; }
         .form-help a:hover { text-decoration: underline; }
         .form-row { display: flex; gap: 10px; }
@@ -1751,6 +1758,7 @@
 
             <footer class="input-area">
                 <div class="input-row">
+                    <button id="sandboxModeBtn" class="sandbox-mode-btn" title="沙箱权限模式（点击切换）">🛡️ 询问</button>
                     <input type="text" id="queryInput" placeholder="输入你的问题... (Enter 发送)" autocomplete="off" />
                     <button id="sendBtn" title="发送">↑</button>
                 </div>
@@ -2297,14 +2305,6 @@
                             <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" style="width:110px;" />
                         </div>
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">沙箱权限模式</label>
-                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="ask" checked /> 询问</label>
-                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="auto" /> 自动</label>
-                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="yolo" /> YOLO</label>
-                            </div>
-                        </div>
-                        <div>
                             <label class="form-label" style="margin-bottom:5px;font-size:12px;">文件备份方式 <span class="opt">YOLO 生效</span></label>
                             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                                 <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照</label>
@@ -2312,7 +2312,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="form-help">询问=需审批工具每次询问 · 自动=自动批准 · YOLO=全自动+高危命令放行+删除/覆盖前备份可回退</div>
+                    <div class="form-help">沙箱权限模式在聊天框左侧快捷切换（询问/自动/YOLO）· 备份方式在 YOLO 模式下生效</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">原始文本 <span class="opt">可选，便于直接注入</span></label>
@@ -4255,8 +4255,6 @@ async function loadUserConfig() {
                 $('ucPreferences').value = uc.preferences || '';
                 $('ucRawText').value = uc.raw_text || '';
                 $('ucMaxToolRounds').value = uc.max_tool_rounds || 0;
-                const sm = uc.sandbox_mode || 'ask';
-                document.querySelectorAll('input[name="ucSandboxMode"]').forEach(r => { r.checked = (r.value === sm); });
                 const bm = uc.backup_mode || 'snapshot';
                 document.querySelectorAll('input[name="ucBackupMode"]').forEach(r => { r.checked = (r.value === bm); });
             }
@@ -4266,7 +4264,6 @@ async function loadUserConfig() {
 
 async function saveUserConfig() {
     const rounds = parseInt($('ucMaxToolRounds').value || '0', 10);
-    const sandboxMode = document.querySelector('input[name="ucSandboxMode"]:checked')?.value || 'ask';
     const backupMode = document.querySelector('input[name="ucBackupMode"]:checked')?.value || 'snapshot';
     const body = {
         basic_info: $('ucBasicInfo').value.trim(),
@@ -4274,7 +4271,6 @@ async function saveUserConfig() {
         preferences: $('ucPreferences').value.trim(),
         raw_text: $('ucRawText').value.trim(),
         max_tool_rounds: Math.min(Math.max(rounds || 0, 0), 50),
-        sandbox_mode: sandboxMode,
         backup_mode: backupMode,
     };
     const btn = $('userConfigSave');
@@ -4286,6 +4282,62 @@ async function saveUserConfig() {
         toast('success', '已保存', '下次对话生效');
     } catch (e) { toast('error', '保存失败', e.message); }
     finally { btn.disabled = false; btn.textContent = '保存'; }
+}
+
+/* ========================================================================
+ * 沙箱权限模式（聊天框左侧快捷切换）
+ * 模式：ask(询问) → auto(自动) → yolo(YOLO) 循环；切换时合并更新用户配置
+ * ====================================================================== */
+const SANDBOX_MODES = ['ask', 'auto', 'yolo'];
+const SANDBOX_LABELS = { ask: '🛡️ 询问', auto: '✅ 自动', yolo: '🔥 YOLO' };
+
+function renderSandboxModeBtn() {
+    const btn = $('sandboxModeBtn');
+    const mode = State.sandboxMode || 'ask';
+    btn.textContent = SANDBOX_LABELS[mode] || SANDBOX_LABELS.ask;
+    btn.className = 'sandbox-mode-btn' + (mode === 'auto' ? ' mode-auto' : mode === 'yolo' ? ' mode-yolo' : '');
+    btn.title = '沙箱权限模式：' + (mode === 'ask' ? '需审批工具每次询问' : mode === 'auto' ? '需审批工具自动批准' : '全自动+高危命令放行+删除备份') + '（点击切换）';
+}
+
+// 从用户配置加载沙箱模式并初始化按钮
+async function initSandboxMode() {
+    try {
+        const resp = await apiFetch('/memory/user-config');
+        if (resp.ok) {
+            const uc = (await resp.json()).user_config;
+            State.sandboxMode = uc?.sandbox_mode || 'ask';
+        }
+    } catch (e) {}
+    renderSandboxModeBtn();
+}
+
+// 切换模式（循环），并合并更新用户配置（保留其他字段）
+async function toggleSandboxMode() {
+    const cur = State.sandboxMode || 'ask';
+    const next = SANDBOX_MODES[(SANDBOX_MODES.indexOf(cur) + 1) % SANDBOX_MODES.length];
+    const btn = $('sandboxModeBtn');
+    btn.disabled = true;
+    try {
+        // 先读现有配置避免覆盖 basic_info/轮数/备份等
+        let base = {};
+        const r1 = await apiFetch('/memory/user-config');
+        if (r1.ok) base = (await r1.json()).user_config || {};
+        const body = {
+            basic_info: base.basic_info || '', location: base.location || '',
+            preferences: base.preferences || '', raw_text: base.raw_text || '',
+            max_tool_rounds: base.max_tool_rounds || 0, backup_mode: base.backup_mode || 'snapshot',
+            sandbox_mode: next,
+        };
+        const r2 = await apiFetch('/memory/user-config', { method: 'PUT', body: JSON.stringify(body) });
+        if (!r2.ok) throw new Error(await readApiError(r2));
+        State.sandboxMode = next;
+        renderSandboxModeBtn();
+        toast('success', '沙箱模式已切换', SANDBOX_LABELS[next] + '（下次对话生效）');
+    } catch (e) {
+        toast('error', '切换失败', e.message);
+    } finally {
+        btn.disabled = false;
+    }
 }
 
 /* ========================================================================
@@ -4530,6 +4582,8 @@ function bindEvents() {
     $('newProjectBtn').onclick = () => openProjectModal('create');
 
     queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } });
+    $('sandboxModeBtn').onclick = () => { void toggleSandboxMode(); };
+    void initSandboxMode();
     sendBtn.onclick = () => {
         const cst = State.streamStates[State.activeSessionId || State.currentSessionId];
         if (cst && cst.isStreaming) stopStreaming();
