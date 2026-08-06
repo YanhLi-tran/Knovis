@@ -16,9 +16,12 @@ import (
 )
 
 const (
-	clientVersion = "0.1.2"
 	localCtrlAddr = "127.0.0.1:17000" // 本地控制服务地址（前端登录后激活用，仅本机可访问）
 )
+
+// clientVersion local-agent 版本号
+// 发布时可用 -ldflags "-X main.clientVersion=vX.Y.Z" 注入（GitHub Actions 按 tag 自动注入）
+var clientVersion = "0.1.2"
 
 // 全局状态（本地控制服务与 WS 连接循环共享）
 // token 采用「登录时由前端推送激活」模式：local-agent 常驻，userID 始终跟随当前登录用户
