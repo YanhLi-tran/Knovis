@@ -1,0 +1,257 @@
+# ===================================================================
+# Knovis 企业级智能知识助手 - 一键部署
+# ===================================================================
+# 6 个 service: mysql / redis / chroma / memory-service / doc-service / agent-go
+#
+# 使用方法：
+#   1. cp .env.docker.example .env   # 复制环境变量示例
+#   2. 按需修改 .env（密码、LLM Key、模型路径等）
+#   3. docker-compose up -d           # 一键启动
+#   4. docker-compose ps              # 查看服务状态
+#   5. docker-compose logs -f agent-go  # 查看 agent-go 日志
+#
+# 注意：
+#   - Knovis 用户服务（8080）不入 Docker，agent-go 通过 host.docker.internal 访问
+#   - local-agent 客户端不入 Docker（需访问宿主机文件系统执行 file/sandbox 工具）
+#   - 模型文件（bge-large-zh / bge-reranker-v2-m3）通过 volume 挂载，不打入镜像
+#   - 15 份年报数据挂载到 doc-service 的 /app/data/uploads，不自动导入
+# ===================================================================
+
+services:
+  # ===== 1. MySQL 8.0（数据库）=====
+  mysql:
+    image: mysql:8.0
+    container_name: knovis-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-knovis123}
+      TZ: Asia/Shanghai
+    ports:
+      - "3306:3306"
+    volumes:
+      # 初始化脚本（首次启动自动创建 agent_go + knovis 两个库）
+      - ./sql/docker-init.sql:/docker-entrypoint-initdb.d/docker-init.sql:ro
+      # 数据持久化
+      - ./data/mysql:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root --password=$${MYSQL_ROOT_PASSWORD} 2>/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    networks:
+      - knovis-net
+
+  # ===== 2. Redis 7（缓存 + token 黑名单）=====
+  redis:
+    image: redis:7-alpine
+    container_name: knovis-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      start_period: 5s
+      retries: 5
+    networks:
+      - knovis-net
+
+  # ===== 3. Chroma（向量库服务，当前备用）=====
+  # 说明：memory-service 和 doc-service 当前使用嵌入式 Chroma（Python 包），
+  #       通过各自独立的 volume 持久化。此服务为未来迁移到 HTTP 模式预留。
+  chroma:
+    image: chromadb/chroma:0.5.23
+    container_name: knovis-chroma
+    restart: unless-stopped
+    environment:
+      IS_PERSISTENT: "TRUE"
+      ANONYMIZED_TELEMETRY: "FALSE"
+      PERSIST_DIRECTORY: /chroma/chroma
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data/chroma-server:/chroma/chroma
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/api/v1/heartbeat || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 15s
+      retries: 5
+    networks:
+      - knovis-net
+
+  # ===== 4. memory-service（Python，embedding + 记忆检索，端口 8002）=====
+  memory-service:
+    build:
+      context: ./memory-service
+      dockerfile: Dockerfile
+    image: knovis-memory-service:latest
+    container_name: knovis-memory-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      MEMORY_SERVICE_PORT: "8002"
+      MEMORY_SERVICE_HOST: "0.0.0.0"
+      # Embedding 模型（挂载到 /app/models/bge-large-zh）
+      EMBEDDING_MODEL: /app/models/bge-large-zh
+      CHROMA_PERSIST_DIR: /app/data/chroma
+      # MySQL
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-knovis123}
+      DB_NAME: agent_go
+      # 检索参数
+      BM25_WEIGHT: "0.3"
+      RAG_WEIGHT: "0.7"
+      EMBED_BATCH_SIZE: "32"
+      RECALL_TOP_N: "10"
+      FINAL_TOP_K: "5"
+      # 预加载模型（首次启动加载，避免首次请求超时）
+      PRELOAD_MODEL: "true"
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      # embedding 模型（宿主机路径在 .env 的 EMBEDDING_MODEL_PATH 配置）
+      - ${EMBEDDING_MODEL_PATH:-./models/bge-large-zh}:/app/models/bge-large-zh:ro
+      # Chroma 数据（独立目录，避免与 doc-service 并发冲突）
+      - ./data/chroma-memory:/app/data/chroma
+    networks:
+      - knovis-net
+
+  # ===== 5. doc-service（Python，RAG 文档检索，端口 8003）=====
+  doc-service:
+    build:
+      context: ./doc-service
+      dockerfile: Dockerfile
+    image: knovis-doc-service:latest
+    container_name: knovis-doc-service
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      memory-service:
+        condition: service_healthy
+    environment:
+      DOC_SERVICE_PORT: "8003"
+      DOC_SERVICE_HOST: "0.0.0.0"
+      # 复用 memory-service 的 /embed 获取向量
+      MEMORY_SERVICE_URL: http://memory-service:8002
+      CHROMA_PERSIST_DIR: /app/data/chroma
+      DOC_UPLOAD_DIR: /app/data/uploads
+      # MySQL
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-knovis123}
+      DB_NAME: agent_go
+      # 分块策略
+      RAG_CHUNK_SIZE: "800"
+      RAG_CHUNK_OVERLAP: "64"
+      # 检索参数
+      RAG_BM25_WEIGHT: "0.3"
+      RAG_RAG_WEIGHT: "0.7"
+      RAG_RECALL_TOP_N: "20"
+      RAG_FINAL_TOP_K: "5"
+      RAG_SECTION_MAX_LEN: "2000"
+      # Rerank（bge-reranker-v2-m3）
+      RERANK_ENABLED: ${RERANK_ENABLED:-false}
+      RERANK_MODEL_PATH: /app/models/bge-reranker-v2-m3
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      # Chroma 数据（独立目录，含 18801 chunks 的年报向量数据）
+      - ./data/chroma-doc:/app/data/chroma
+      # 15 份年报 PDF（不自动导入，仅挂载供扫描/重新摄入）
+      - ${UPLOADS_PATH:-./data/uploads}:/app/data/uploads
+      # rerank 模型（仅 RERANK_ENABLED=true 时需要）
+      - ${RERANK_MODEL_HOST_PATH:-./models/bge-reranker-v2-m3}:/app/models/bge-reranker-v2-m3:ro
+    networks:
+      - knovis-net
+
+  # ===== 6. agent-go（Go 主服务，OTACO 编排 + FC 工具，端口 8001）=====
+  agent-go:
+    build:
+      context: ./agent-go
+      dockerfile: Dockerfile
+    image: knovis-agent-go:latest
+    container_name: knovis-agent-go
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      memory-service:
+        condition: service_healthy
+      doc-service:
+        condition: service_healthy
+    environment:
+      # MySQL
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD:-knovis123}
+      DB_NAME: agent_go
+      # Redis
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
+      REDIS_DB: "0"
+      # 子服务地址（Docker 内部网络，用服务名访问）
+      MEMORY_SERVICE_URL: http://memory-service:8002
+      DOC_SERVICE_URL: http://doc-service:8003
+      # Knovis 用户服务（宿主机访问，不入 Docker）
+      KNOVIS_API_BASE_URL: ${KNOVIS_API_BASE_URL:-http://host.docker.internal:8080}
+      # LLM 配置（系统兜底 key，可选：仅当用户未自带 API key 时按日免费额度使用；用户自带 key 优先且不限流）
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
+      # 免费额度：未配置用户 key 时，系统兜底 key 的每日对话次数上限（默认 5）
+      FREE_QUOTA_PER_DAY: ${FREE_QUOTA_PER_DAY:-5}
+      # JWT（SSO 形态：只校验 Knovis 签发的 JWT）
+      AUTH_MODE: ${AUTH_MODE:-dev}
+      JWT_SECRET: ${JWT_SECRET:-}
+      JWT_ISSUER: ${JWT_ISSUER:-Knovis}
+      JWT_AUDIENCE: ${JWT_AUDIENCE:-agent-go}
+      # AES-256-GCM 主密钥（加密用户 LLM key / Knovis token）
+      MASTER_KEY_V1: ${MASTER_KEY_V1:-}
+    ports:
+      - "8001:8001"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    extra_hosts:
+      # Linux 下访问宿主机服务（如 Knovis 8080）
+      - "host.docker.internal:host-gateway"
+    volumes:
+      # agent-go 的 .env 文件（若需要，可覆盖 environment 字段）
+      - ./agent-go/.env:/app/.env:ro
+    networks:
+      - knovis-net
+
+networks:
+  knovis-net:
+    driver: bridge
+    name: knovis-net
