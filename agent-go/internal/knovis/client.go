@@ -1,6 +1,7 @@
 package knovis
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -72,8 +73,7 @@ func (c *Client) GetPost(ctx context.Context, token, postID string) (string, err
 
 // do 发送 HTTP 请求（Bearer token 鉴权），统一处理 Knovis 错误响应
 // Knovis 错误格式：{"code": <HTTP状态码>, "message": "..."}，解析 message 透出可读信息
-func (c *Client) do(ctx context.Context, token, method, path string) (string, error) {
-	urlStr := c.baseURL + path
+func (c *Client) do(ctx context.Context, token, method, path string) (string, error) {	urlStr := c.baseURL + path
 	req, err := http.NewRequestWithContext(ctx, method, urlStr, nil)
 	if err != nil {
 		return "", fmt.Errorf("创建请求失败: %w", err)
@@ -104,4 +104,27 @@ func (c *Client) do(ctx context.Context, token, method, path string) (string, er
 		return "", fmt.Errorf("Knovis API 错误 status=%d", resp.StatusCode)
 	}
 	return string(body), nil
+}
+
+// PostPublic 转发请求体到 Knovis 公开接口（登录/注册等无需 token 的接口）
+// agent-go 反代用：返回 Knovis 原始状态码与响应体，避免前端跨端口调用被浏览器拦截
+func (c *Client) PostPublic(ctx context.Context, path string, body []byte) (int, []byte, error) {
+	urlStr := c.baseURL + path
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, urlStr, bytes.NewReader(body))
+	if err != nil {
+		return 0, nil, fmt.Errorf("创建转发请求失败: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return 0, nil, fmt.Errorf("调用 Knovis %s 失败: %w", path, err)
+	}
+	defer resp.Body.Close()
+
+	out, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("读取响应失败: %w", err)
+	}
+	return resp.StatusCode, out, nil
 }

@@ -1,6 +1,7 @@
-package api
+﻿package api
 
 import (
+	"io"
 	"log"
 	"net/http"
 
@@ -100,6 +101,9 @@ func (s *Server) registerRoutes(srv *rest.Server) {
 	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/tools", Handler: s.adapt(s.listTools)})
 
 	// SSO 形态：注册/登录/刷新由 Knovis 提供，agent-go 仅保留 logout（公开）+ me + 凭证管理（需鉴权）
+	// 反向代理 Knovis 登录/注册接口(避免前端跨端口调用被浏览器拦截)
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/api/auth/login", Handler: s.proxyKnovisEndpoint("/login")})
+	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/api/auth/register", Handler: s.proxyKnovisEndpoint("/register")})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/auth/logout", Handler: s.adapt(s.logout)})
 	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/auth/me", Handler: s.adapt(s.me)})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/auth/llm-key", Handler: s.adapt(s.setLLMKey)})
@@ -178,5 +182,33 @@ func (s *Server) registerRoutes(srv *rest.Server) {
 func (s *Server) adapt(h func(*GinCompat)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		h(NewGinCompat(w, r))
+	}
+}
+
+// proxyKnovisEndpoint 反向代理 Knovis 公开接口（登录/注册等，同源调用避免跨端口被浏览器拦截）
+// path 为 Knovis 侧路径（如 /login、/register），Knovis 地址统一来自 KNOVIS_API_BASE_URL 配置
+func (s *Server) proxyKnovisEndpoint(path string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.knovisClient == nil {
+			http.Error(w, "Knovis 客户端未配置", http.StatusServiceUnavailable)
+			return
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			http.Error(w, "读取请求体失败", http.StatusBadRequest)
+			return
+		}
+		r.Body.Close()
+
+		code, out, err := s.knovisClient.PostPublic(r.Context(), path, body)
+		if err != nil {
+			log.Printf("[WARN][api] Knovis 反代失败 path=%s err=%v", path, err)
+			http.Error(w, "Knovis 服务不可达", http.StatusBadGateway)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(code)
+		w.Write(out)
 	}
 }
