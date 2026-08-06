@@ -17,7 +17,7 @@ trigger: 用户要求总结、分析、对比企业知识库中的文档（如�
 3. **汇总输出**：
    - 单文档总结：表格汇总各主题要点。
    - 多公司/多年份对比：用**对比表格**呈现（行 = 指标，列 = 公司 / 年度），并给出差异与亮点结论。
-4. **输出文档**（用户要求"输出/生成文档"时）：将完整分析结果写入 **local-agent 的工作区（workspace）** 内。用 `file_write` 写入，**path 传相对路径**（如 `reports/五粮液2023年报分析.md`），实际落在 local-agent 的 `workspace/reports/` 下；目录不存在先用 `sandbox_exec` 执行 `mkdir -p reports`。回复时告知文件路径（`workspace/reports/xxx.md`）与内容摘要。
+4. **输出文档**（用户要求"输出/生成文档"时）：将完整分析结果写入 **local-agent 的工作区（workspace）** 内，目录结构按 system prompt「当前会话上下文」组织：`workspace/<所属项目或全局>/<会话标题>/<文件名>.md`。用 `file_write` 写入，**path 传相对路径**（如 `所属项目/会话标题/五粮液vs宁德时代对比分析.md`，实际落在 local-agent 的 `workspace/` 下）；目录不存在先用 `sandbox_exec` 执行 `mkdir -p` 逐级创建。回复时告知完整文件路径（`workspace/<项目或全局>/<会话标题>/xxx.md`）与内容摘要。
 
 ## 输出要求（严格遵守）
 
@@ -31,4 +31,4 @@ trigger: 用户要求总结、分析、对比企业知识库中的文档（如�
 
 - `kb_list_docs`：列出企业知识库文档（company_code / status 过滤），返回 `doc_id` 等元信息，用于确定总结/对比范围。
 - `rag_search`：知识库检索（常驻工具），传 `doc_ids` 可限定范围，返回带来源的内容片段。
-- `file_write`：写入 **local-agent 工作区（workspace）** 内文件（需审批），path 传相对路径（如 `reports/xxx.md`，实际落在 `workspace/reports/`）；`sandbox_exec` 可执行 `mkdir` 建目录。
+- `file_write`：写入 **local-agent 工作区（workspace）** 内文件（需审批），path 传相对路径（如 `项目或全局/会话标题/xxx.md`，实际落在 `workspace/` 下）；`sandbox_exec` 可执行 `mkdir -p` 建目录。

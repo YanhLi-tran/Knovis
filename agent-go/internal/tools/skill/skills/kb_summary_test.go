@@ -60,7 +60,7 @@ func TestKBSummarySKILLMD(t *testing.T) {
 	if desc == "" || trigger == "" {
 		t.Fatal("description/trigger 不应为空")
 	}
-	for _, want := range []string{"表格", "rag_search", "doc_ids", "禁止臆想", "兜底", "对比", "file_write", "输出文档", "workspace", "相对路径"} {
+	for _, want := range []string{"表格", "rag_search", "doc_ids", "禁止臆想", "兜底", "对比", "file_write", "输出文档", "workspace", "相对路径", "会话标题"} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("正文应包含 %q，实际:\n%s", want, instructions)
 		}

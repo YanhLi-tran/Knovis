@@ -116,8 +116,11 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			}
 		}
 
+		// P8: 解析当前会话上下文（会话标题 + 所属项目名），供 skill（如 kb_summary 输出文档目录）使用
+		sessionTitle, projectName := o.resolveSessionContext(sessionID, projectID)
+
 		// 组装 system prompt（skill 注册表在此注入，静态，一次性构建）
-		systemPrompt := o.buildSystemPrompt(memoryBlock, userID)
+		systemPrompt := o.buildSystemPrompt(memoryBlock, userID, sessionTitle, projectName)
 		// toolDefs 在 OTACO 循环内每轮构建：load_skill 执行后下一轮需包含新加载的 skill 工具
 
 		// 加载历史（如果有 sessionID）
@@ -745,9 +748,10 @@ func (o *Orchestrator) handleAskUser(ctx context.Context, ch chan<- SSEEvent, ca
 // buildSystemPrompt 组装 system prompt
 // memoryBlock 为 P2 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5），插入到工具列表之后、当前时间之前
 // userID 用于 Skill 注册表按用户过滤（用户私有 skill 仅 owner 可见）
+// sessionTitle/projectName 为当前会话上下文（P8：会话标题 + 所属项目名），注入后供 skill（如 kb_summary 输出文档目录）使用
 // 注入顺序（KV Cache 友好：稳定内容靠前，易变靠后）：
-//   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定) → memoryBlock(易变) → 当前时间(最易变)
-func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string) string {
+//   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定) → memoryBlock(易变) → 会话上下文(易变) → 当前时间(最易变)
+func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sessionTitle string, projectName string) string {
 	var sb strings.Builder
 
 	appCfg := o.configMgr.GetAppConfig()
@@ -859,6 +863,19 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string) stri
 		sb.WriteString(memoryBlock)
 	}
 
+	// P8: 当前会话上下文块（供 skill 输出文档目录等使用；放在记忆块之后、当前时间之前）
+	sb.WriteString("\n## 当前会话上下文\n")
+	if projectName != "" {
+		sb.WriteString("- 所属项目: " + projectName + "\n")
+	} else {
+		sb.WriteString("- 所属项目: 全局（未关联项目）\n")
+	}
+	if sessionTitle != "" && sessionTitle != "新对话" {
+		sb.WriteString("- 会话标题: " + sessionTitle + "\n")
+	} else {
+		sb.WriteString("- 会话标题: 未命名会话\n")
+	}
+
 	// 当前时间放在 system prompt 最末尾：前缀（人格+规则+OTACO流程+工具）完全稳定，
 	// 最大化命中 KV Cache；只有时间这小段每请求变化。
 	// 显式使用 Asia/Shanghai 时区，与 .env 中 SESSION_TIMEZONE 保持一致。
@@ -871,6 +888,26 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string) stri
 		now.Format("2006-01-02 15:04:05 Monday")))
 
 	return sb.String()
+}
+
+// resolveSessionContext 查询当前会话标题与所属项目名（P8）
+// 供 system prompt「当前会话上下文」块与 skill（如 kb_summary 输出文档目录）使用
+// 查询失败不阻断对话，返回空串由调用方兜底展示
+func (o *Orchestrator) resolveSessionContext(sessionID, projectID string) (sessionTitle, projectName string) {
+	if o.persister == nil || o.persister.repos == nil {
+		return "", ""
+	}
+	if sessionID != "" {
+		if s, err := o.persister.repos.Session.GetByID(sessionID, ""); err == nil && s != nil {
+			sessionTitle = s.Title
+		}
+	}
+	if projectID != "" {
+		if p, err := o.persister.repos.Project.GetByID(projectID, ""); err == nil && p != nil {
+			projectName = p.Name
+		}
+	}
+	return sessionTitle, projectName
 }
 
 // buildTools 构建工具定义列表（含 ask_user + load_skill + session 已加载 skill 工具）
