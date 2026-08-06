@@ -1787,7 +1787,8 @@
                 </div>
                 <div class="form-help">
                     获取方式：访问 <a href="https://platform.deepseek.com/api_keys" target="_blank">DeepSeek 平台</a> 创建 API Key（sk- 开头）。<br/>
-                    密钥通过 <code style="background:rgba(99,102,241,0.08);padding:1px 5px;border-radius:3px;">POST /auth/llm-key</code> 加密存储，前端不保留明文。
+                    密钥通过 <code style="background:rgba(99,102,241,0.08);padding:1px 5px;border-radius:3px;">POST /auth/llm-key</code> 加密存储，前端不保留明文。<br/>
+                    配置后所有对话走你的 key（无限制）；未配置则使用系统兜底 key，每日免费 <strong>5</strong> 次。
                 </div>
             </div>
             <div class="modal-footer">
@@ -2584,6 +2585,11 @@ async function doRegister() {
         $('loginEmail').value = email;
         $('loginPassword').value = '';
         await performLogin(email, password, 'registerModal');
+        // 注册后引导：未配置大模型 API key 时弹窗提示（不配置则使用系统兜底 key 的每日免费额度）
+        if (!State.hasLLMKey) {
+            toast('info', '配置 API Key', '配置你的大模型 API Key 可无限制使用；未配置则每天免费 5 次');
+            setTimeout(() => openModal('apiKeyModal'), 500);
+        }
     } catch (e) {
         toast('error', '注册失败', e.message);
     } finally {
