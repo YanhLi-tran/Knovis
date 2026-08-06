@@ -53,8 +53,8 @@ func main() {
 		log.Fatalf("[FATAL] 缺少 token，请用 -token 参数或 AGENT_TOKEN 环境变量指定")
 	}
 
-	wsURL := *serverURL + "/ws/agent?token=" + *token
-	log.Printf("[INFO] local-agent 启动 version=%s platform=%s", clientVersion, runtime.GOOS)
+	wsURL := *serverURL + "/ws/agent?token=" + *token + "&role=agent"
+	log.Printf("[INFO] local-agent 启动 version=%s platform=%s role=agent", clientVersion, runtime.GOOS)
 	log.Printf("[INFO] 目标服务器: %s", *serverURL)
 
 	// 断线重连（指数退避，最大间隔 30s）

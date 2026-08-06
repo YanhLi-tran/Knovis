@@ -43,6 +43,9 @@ func NewHandler(hub *Hub, authService *auth.AuthService, authMode string) *Handl
 
 // HandleWS 处理 WebSocket 升级请求
 // 路由：GET /ws/agent?token=<jwt_access_token>
+// 角色区分：local-agent 执行客户端必须带 &role=agent 才注册 hub 执行槽位；
+// 浏览器等观察者连接不注册 hub（仅保持连接），避免抢占 local-agent 的 userID 槽位
+// ——否则 file/sandbox 指令会被下发到不处理指令的浏览器连接，导致 command timeout。
 func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 	userID := h.authenticate(w, r)
 	if userID == "" {
@@ -58,14 +61,20 @@ func (h *Handler) HandleWS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	role := r.URL.Query().Get("role")
+
 	conn := newClientConn(userID, wsConn, h.hub)
-	h.hub.Register(conn)
+	if role == "agent" {
+		h.hub.Register(conn)
+	} else {
+		log.Printf("[INFO][ws] 观察者连接(不注册执行槽位) userID=%s remote=%s role=%q", userID, r.RemoteAddr, role)
+	}
 
 	// 启动读/写循环（任一退出都会触发 Close 清理）
 	go conn.writeLoop()
 	go conn.readLoop()
 
-	log.Printf("[INFO][ws] 连接建立 userID=%s remote=%s", userID, r.RemoteAddr)
+	log.Printf("[INFO][ws] 连接建立 userID=%s remote=%s role=%q", userID, r.RemoteAddr, role)
 }
 
 // authenticate 鉴权：优先 query token（JWT），dev 模式降级 X-Client-ID
