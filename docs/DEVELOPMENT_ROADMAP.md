@@ -22,42 +22,51 @@
 
 ```
 ┌─────────────────────────────────────────────────┐
-│  Web 前端 (SSE 流式 + 引用卡片 + 审批/提问框)    │ ← 已有，扩展引用渲染
+│  Web 前端 (SSE 流式 + 引用卡片 + 审批/提问框)    │ ← 已有，含调试面板(trace)
 ├─────────────────────────────────────────────────┤
-│  Agent 编排层 (Function Call + ReAct)            │ ← 已有，加 Plan-Execute
-│  ├─ 工具注册 (ToolBuilder)                       │
-│  ├─ 多轮上下文管理 (会话历史 + 压缩)             │ ← 新增
-│  └─ 可观测性 (trace + token 计量)                │ ← 新增
+│  Agent 编排层 (OTACO = ReAct + 反思)             │ ← 已有，加 Plan-Execute
+│  ├─ 工具注册 (Registry + Skill 注册表)           │
+│  ├─ 多轮上下文管理 (会话历史 + 滑动窗口压缩)     │ ← 已有
+│  └─ 可观测性 (trace + token 计量)                │ ← 已有(trace),token 计量待补
 ├─────────────────────────────────────────────────┤
 │  工具层                                          │
-│  ├─ RAG 检索 (向量库 + rerank)        ← 新增核心 │
+│  ├─ RAG 检索 (向量 + BM25 + 段落召回 + rerank)   │ ← 已有(rerank 默认关闭)
 │  ├─ NL2SQL 查询                       ← 新增    │
 │  ├─ Web 搜索 (腾讯 WSA)               ← 已有    │
-│  ├─ 文件操作 (read/write/grep)        ← 已有    │
-│  ├─ 沙箱命令 (run_command + 审批)     ← 已有    │
+│  ├─ 文件操作 (read/write/grep/list)   ← 已有    │
+│  ├─ 沙箱命令 (sandbox_exec + 审批)    ← 已有    │
 │  ├─ ask_user 提问澄清                 ← 已有    │
-│  └─ MCP 外接 (瑞幸等)                 ← 已有    │
+│  ├─ 记忆系统 (混合检索 + 自动提取)    ← 已有    │
+│  └─ MCP 外接                          ← 预留(Layer 3,未实现) │
 ├─────────────────────────────────────────────────┤
 │  基础设施                                        │
-│  ├─ FastAPI + SSE 流式                ← 已有    │
+│  ├─ Go 主服务 (go-zero rest + SSE)    ← 已有    │
+│  ├─ Python 子服务 (memory/doc)        ← 已有    │
 │  ├─ DeepSeek / OpenAI 兼容            ← 已有    │
-│  └─ SQLite 会话/审计日志              ← 新增    │
+│  ├─ MySQL 会话/审计/记忆              ← 已有    │
+│  └─ Knovis user-api (SSO 签发 JWT)    ← 已有    │
 └─────────────────────────────────────────────────┘
 ```
 
-### 现有资产盘点
+### 现有资产盘点(2026-08-06 已对齐实际)
 
 | 模块 | 状态 | 说明 |
 |---|---|---|
-| FastAPI + SSE 流式 | ✅ 已有 | `/search/stream` 端点 |
-| Function Call 编排 | ✅ 已有 | `LLM_client.agent_chat_stream` |
-| 工具注册机制 | ✅ 已有 | `ToolBuilder` 扫描 `Agent_Tools/*.py` |
-| CLI 沙箱（6 层防护） | ✅ 已有 | `run_command` + 审批流 |
-| 文件操作工具 | ✅ 已有 | `listFiles / readFile / writeFile / grepFiles` |
+| Go 主服务(go-zero rest) | ✅ 已有 | `agent-go` :8001,API + OTACO 编排(原 Gin,2026-08-05 重构为 go-zero) |
+| 记忆系统 | ✅ 已有 | MySQL 13 表 + Redis + Chroma,BM25+RAG 混合检索,TTL 归档 |
+| RAG 文档系统 | ✅ 已有 | `doc-service` :8003,PDF 摄入 + 多路召回 + 段落召回 + 引用溯源 |
+| Embedding 子服务 | ✅ 已有 | `memory-service` :8002,bge-large-zh + BM25 + 关键词提取 |
+| 用户/动态服务 | ✅ 已有 | `Knovis user-api` :8080(go-zero),SSO 签发 JWT,agent-go 只校验 |
+| 工具注册机制 | ✅ 已有 | 三层架构:13 个常驻 FC + 2 个 Skill(按需加载) |
+| 文件操作工具 | ✅ 已有 | file_read/file_write/grep/file_list(走 WS 下发 local-agent) |
+| 沙箱命令 | ✅ 已有 | sandbox_exec(白名单 + timeout + 审批流) |
 | Web 搜索 | ✅ 已有 | 腾讯云 WSA |
 | ask_user 提问工具 | ✅ 已有 | SSE 弹框 + 回灌 |
-| MCP 外接 | ✅ 已有 | 瑞幸咖啡示例 |
-| 前端审批/提问框 | ✅ 已有 | 紫色提问框 + 黄色审批框 |
+| 评测体系 | ✅ 已有 | 64 条 RAG + 35 条 Agent 评测集 + LLM-as-Judge |
+| 全链路 trace | ✅ 已有 | X-Trace-Id 透传 + 前端调试面板(2026-08-06) |
+| 前端 | ✅ 已有 | 单文件 HTML(SSE + 审批框 + 提问框 + 调试面板) |
+| MCP 外接 | ❌ 预留 | 设计保留 Layer 3,未实现 |
+| NL2SQL / Plan-and-Execute / docker-compose | ❌ 待做 | 见 [04-待补齐项与优先级.md](./04-待补齐项与优先级.md) |
 
 ---
 
@@ -231,11 +240,11 @@
 | Rerank | **bge-reranker-v2-m3**（本地）或 Cohere | 本地版能讲部署，云版简单 |
 | 文档解析 | **unstructured** + **pypdf** | 支持 PDF/Word/Markdown/HTML |
 | BM25 | **rank_bm25** | 轻量纯 Python |
-| 数据库（NL2SQL 目标） | **SQLite** + 示例数据集 | 演示用，免部署 |
-| 会话/审计存储 | **SQLite** | 已规划，复用现有 |
+| 数据库（NL2SQL 目标） | **SQLite** + 示例数据集 | 演示用，免部署（规划中） |
+| 会话/审计存储 | **MySQL** | 已落地(agent_go 库,13 张表) |
 | LLM | **DeepSeek Chat** | 已有，OpenAI 兼容 |
-| Web 框架 | **FastAPI + SSE** | 已有 |
-| 前端 | **单文件 HTML/CSS/JS** | 已有，扩展引用卡片 |
+| Web 框架 | **go-zero rest + SSE** | 已有(2026-08-05 从 Gin 重构) |
+| 前端 | **单文件 HTML/CSS/JS** | 已有，含引用卡片 + 调试面板 |
 
 ---
 

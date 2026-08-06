@@ -28,7 +28,7 @@
 | 分块策略 | 标题层级切分 + chunk_size=800/overlap=64 | 语义完整 + 精确召回 |
 | 表格处理 | 保留为 Markdown 表格,作为独立块 | 表格语义不可拆 |
 | 召回策略 | 索引粒度=chunk(800字),返回粒度=最小标题小节;小节超 2000 字 fallback 到 chunk + 前后各 1 chunk | 解决单 chunk 命中但上下文断裂痛点 |
-| Rerank | 接口全部实现,RERANK_ENABLED=false 默认不启用,模型加载留 TODO | 预留扩展点,首版不引入模型依赖 |
+| Rerank | 接口完整实现 + bge-reranker-v2-m3 已评测(2026-08-05);`RERANK_ENABLED=false` 默认关闭(评测显示当前配置下轻微下降) | Before/After 数据见《03-评测体系建设.md》§六,调优后再启用 |
 | 引用溯源 | 答案标 `[来源: xxx.pdf, p45, 章节]` + 前端卡片 | 可验证、可追溯 |
 | 上传方式 | 本地目录扫描导入 + HTTP 上传 | 15 份年报批量导入 + 单文件上传 |
 | 元数据提取 | 自动从文件名 `股票代码_年份_公司简称_全称.pdf` 解析,失败则手动填 | 文件名规律明确 |
@@ -205,7 +205,7 @@ query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 - `main.py`:7 个端点(/health、/documents/ingest、/documents/scan、/rag/search、/documents、/documents/:id、DELETE /documents/:id)
 - `parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题识别 + 800/64 滑动窗口二次切 + 表格独立块)+ 文件名元数据解析
 - `store.py`:MySQL chunks 读写 + BM25 FULLTEXT 检索 + Chroma doc_global 向量检索 + 3:7 归一化融合 + 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
-- `reranker.py`:Reranker 接口完整实现(is_enabled/rerank),RERANK_ENABLED=false 时原样返回,模型加载留 TODO
+- `reranker.py`:Reranker 接口完整实现(is_enabled/rerank),RERANK_ENABLED=true + RERANK_MODEL_PATH 启用;2026-08-05 已用 bge-reranker-v2-m3 完成 Before/After 评测(见 03 §六),当前默认关闭
 - `embedder_client.py`:HTTP 调 memory-service /embed_vectors(分批 32),复用 bge-large-zh 不重复加载
 
 **memory-service 扩展**
@@ -255,13 +255,13 @@ query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 4. ✅ KV Cache 友好:工具描述在稳定区(工具列表),不插入 memoryBlock
 5. ✅ 全局共享:Chroma 单 collection doc_global
 6. ✅ 段落召回:索引粒度=chunk(800字),返回粒度=最小标题小节,超 2000 字 fallback
-7. ✅ rerank 预留:接口完整,RERANK_ENABLED=false,模型加载留 TODO
+7. ✅ rerank 已接入并评测:bge-reranker-v2-m3,Before/After 数据见 03 §六,默认关闭待调优
 8. ✅ 引用溯源:rag_search 返回 doc_name+page_num+heading_path,前端渲染卡片
 9. ✅ 删除级联:软删 MySQL + 删 Chroma 向量
 10. ✅ 文件名元数据解析:自动从 股票代码_年份_公司简称_全称.pdf 解析
 11. ✅ pymupdf4llm 分块:标题层级切分 + 800/64 滑动窗口 + 表格独立块
 12. ✅ 不阻断主流程:rag_search 失败返回错误信息给 LLM,不阻断对话
-13. ✅ 未改 P1-P4 代码逻辑;未做 docker-compose;未做安全 P0;未下载 rerank 模型
+13. ✅ 未改 P1-P4 代码逻辑;未做 docker-compose;未做安全 P0;rerank 已评测(默认关闭)
 
 ### 10.4 性能说明
 

@@ -18,7 +18,7 @@
 - `doc-service/main.py`:7 个端点(/health、/documents/ingest、/documents/scan、/rag/search、/documents、/documents/:id、DELETE /documents/:id)
 - `doc-service/parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题 + 800/64 滑动窗口二次切 + 表格独立块)+ 文件名元数据解析(股票代码_年份_公司简称_全称.pdf)
 - `doc-service/store.py`:MySQL chunks 读写 + BM25 FULLTEXT 检索 + Chroma doc_global 向量检索 + 3:7 归一化融合 + 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
-- `doc-service/reranker.py`:Reranker 接口完整实现,RERANK_ENABLED=false 默认不启用,模型加载留 TODO
+- `doc-service/reranker.py`:Reranker 接口完整实现,`RERANK_ENABLED=true` + `RERANK_MODEL_PATH` 启用;2026-08-05 已用 bge-reranker-v2-m3 完成 Before/After 评测(见《03-评测体系建设.md》§六),当前默认关闭待调优
 - `doc-service/embedder_client.py`:HTTP 调 memory-service /embed_vectors(分批 32),复用 bge-large-zh 不重复加载
 
 **memory-service 扩展**:
@@ -93,8 +93,8 @@ query → BM25(chunks FULLTEXT) top-20 + RAG(Chroma 向量) top-20
 
 - 数据库:新增 2 张表(agent_documents + agent_document_chunks),共 11 张表
 - 向量库:Chroma 新增 doc_global collection(全局共享,与记忆系统按项目隔离的 collection 分离)
-- 已注册工具:12 个常驻 FC(原 5 info + file_write/grep/file_list/file_read/sandbox_exec/load_skill + rag_search)+ 1 个 Skill(Knovis)
-- 服务:新增 doc-service(8003),共 3 个服务(agent-go 8001 / memory-service 8002 / doc-service 8003)
+- 已注册工具:13 个常驻 FC(原 5 info + file_write/grep/file_list/file_read/sandbox_exec/summarize_history/ask_user/load_skill + rag_search)+ 2 个 Skill(knovis / kb_summary)
+- 服务:doc-service(8003)+ memory-service(8002)+ agent-go(8001)+ Knovis user-api(8080),共 4 个服务 + local-agent 客户端
 - 文档库:15 份上市公司年报(5 家公司 × 3 年:五粮液/海康威视/宁德时代/贵州茅台/中国平安)
 - 端到端验证:五粮液2021年报(951 chunks)→ 提问营收 → rag_search 3 次调用 → 答案 662.09 亿 + 引用溯源
 
