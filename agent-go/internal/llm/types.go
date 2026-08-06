@@ -11,9 +11,11 @@ const (
 )
 
 // Message 对话消息
+// 注意：Content 不能用 omitempty——DeepSeek 严格要求每条消息必须有 content 字段
+// （assistant 工具调用轮 content 可能为空字符串，omitempty 会整个省略该字段导致 400 missing field content）
 type Message struct {
 	Role       Role       `json:"role"`
-	Content    string     `json:"content,omitempty"`
+	Content    string     `json:"content"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"` // role=tool 时关联的调用 id
 }
