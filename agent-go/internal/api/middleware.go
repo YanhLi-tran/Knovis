@@ -1,4 +1,4 @@
-package api
+﻿package api
 
 import (
 	"context"
@@ -96,6 +96,10 @@ func isPublicPath(path string) bool {
 	}
 	// /auth/logout 公开（登出无需 token 即可调用）
 	// 其余 /auth/* （me / llm-key / knovis-token）需要鉴权，不在白名单
+	// /api/auth/login、/api/auth/register 公开(Knovis 登录/注册反向代理,前端同源调用)
+	if path == "/api/auth/login" || path == "/api/auth/register" {
+		return true
+	}
 	if path == "/auth/logout" {
 		return true
 	}
