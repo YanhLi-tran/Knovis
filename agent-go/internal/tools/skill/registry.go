@@ -2,6 +2,7 @@ package skill
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 
@@ -23,8 +24,10 @@ type SkillMetadata struct {
 // 启动时注册到全局 Registry；load_skill 调用时按 session 构建具体工具（绑定 userID/token）
 type SkillDefinition struct {
 	Metadata     SkillMetadata
-	Instructions string        // 使用说明（load_skill 返回给 LLM，注入下一轮 context）
-	ToolBuilders []ToolBuilder // 工具构建器（load_skill 时调用，返回绑定 userID 的工具定义 + Handler）
+	Instructions string        // 使用说明（load_skill 返回给 LLM，注入下一轮 context；文件型 skill 为 SKILL.md 正文）
+	ToolBuilders []ToolBuilder // 工具构建器（load_skill 时调用，返回绑定 userID 的工具定义 + Handler；可选）
+	Scripts      []SkillScript // 执行代码（可选，load_skill 时同步到用户本地 workspace/skills/<name>/ 供 sandbox_exec 执行）
+	OwnerUserID  string        // 空 = 全局内置 skill；非空 = 用户私有 skill（仅该用户可见/可加载）
 }
 
 // ToolBuilder 工具构建器（load_skill 时按 session 调用）
@@ -52,12 +55,19 @@ func (r *Registry) Register(def *SkillDefinition) {
 	log.Printf("[INFO][skill] 注册 Skill: name=%s tools=%d", def.Metadata.Name, len(def.ToolBuilders))
 }
 
-// List 元信息列表（注入 system prompt 的 Skill 注册表）
-func (r *Registry) List() []SkillMetadata {
+// List 元信息列表（注入 system prompt 的 Skill 注册表；全局内置 + 用户私有）
+// userID 非空时额外包含该用户的私有 skill（多租户隔离：A 用户看不到 B 用户的 skill）
+func (r *Registry) List(userID string) []SkillMetadata {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	list := make([]SkillMetadata, 0, len(r.skills))
 	for _, def := range r.skills {
+		if def.OwnerUserID != "" && userID != "" && def.OwnerUserID != userID {
+			continue // 用户私有 skill 仅 owner 可见
+		}
+		if def.OwnerUserID != "" && userID == "" {
+			continue // 匿名/无身份时不下发用户私有 skill
+		}
 		list = append(list, def.Metadata)
 	}
 	return list
@@ -69,6 +79,63 @@ func (r *Registry) Get(name string) (*SkillDefinition, bool) {
 	defer r.mu.RUnlock()
 	def, ok := r.skills[name]
 	return def, ok
+}
+
+// LoadFromDir 从目录扫描加载文件型 Skill（全局内置）
+// 目录结构：<root>/<skill-name>/SKILL.md + scripts/（见 md.go）
+// 目录名与 frontmatter name 不一致时返回错误（保证引用路径一致）
+func (r *Registry) LoadFromDir(root string, maxScriptBytes int64) error {
+	defs, err := LoadSkillsDir(root, maxScriptBytes)
+	if err != nil {
+		return err
+	}
+	for _, def := range defs {
+		r.Register(def)
+	}
+	return nil
+}
+
+// AttachToolBuilders 为已注册的文件型 Skill 附加内置 Go 工具（混合模式）
+// 适用场景：SKILL.md 描述流程，但执行需要 Go 层能力（如 token 解密调外部 API）。
+// 例如 knovis：SKILL.md 引导 + knovis_get_feed 等 Go 工具执行。
+// Skill 不存在时返回错误（防止拼写错误静默失效）。
+func (r *Registry) AttachToolBuilders(name string, builders []ToolBuilder) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	def, ok := r.skills[name]
+	if !ok {
+		return fmt.Errorf("AttachToolBuilders: Skill %s 未注册", name)
+	}
+	def.ToolBuilders = append(def.ToolBuilders, builders...)
+	return nil
+}
+
+// Unregister 移除 Skill（用户删除自己上传的 skill 时调用）
+// ownerUserID 非空时仅允许移除该用户自己的 skill（防越权删全局/他人）
+func (r *Registry) Unregister(name, ownerUserID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	def, ok := r.skills[name]
+	if !ok {
+		return nil // 不存在视为已删除，幂等
+	}
+	if ownerUserID != "" && def.OwnerUserID != ownerUserID {
+		return fmt.Errorf("无权删除 Skill %s（归属 %s）", name, def.OwnerUserID)
+	}
+	delete(r.skills, name)
+	log.Printf("[INFO][skill] 移除 Skill: name=%s", name)
+	return nil
+}
+
+// OwnerOf 查询 Skill 归属（api 层删除校验用）：空=全局内置，非空=用户 userID
+func (r *Registry) OwnerOf(name string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	def, ok := r.skills[name]
+	if !ok {
+		return ""
+	}
+	return def.OwnerUserID
 }
 
 // BuildSkillRegistryBlock 构建 Skill 注册表文本（注入 system prompt）

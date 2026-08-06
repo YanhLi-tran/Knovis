@@ -32,7 +32,7 @@ func failToolBuilder() ToolBuilder {
 // TestLoadUnknownSkill 加载未注册的 Skill 应返回错误
 func TestLoadUnknownSkill(t *testing.T) {
 	reg := NewRegistry()
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	_, err := mgr.Load(context.Background(), "session-1", "nonexistent", "user-1")
 	if err == nil {
@@ -48,7 +48,7 @@ func TestLoadIdempotent(t *testing.T) {
 		Instructions: "test-instructions",
 		ToolBuilders: []ToolBuilder{mockToolBuilder("test_tool")},
 	})
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	// 第一次加载
 	inst1, err := mgr.Load(context.Background(), "session-1", "test-skill", "user-1")
@@ -79,7 +79,7 @@ func TestLoadConcurrent(t *testing.T) {
 		Instructions: "concurrent-instructions",
 		ToolBuilders: []ToolBuilder{mockToolBuilder("concurrent_tool")},
 	})
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	var wg sync.WaitGroup
 	errs := make([]error, 10)
@@ -113,7 +113,7 @@ func TestLoadBuildFailure(t *testing.T) {
 		Instructions: "fail-instructions",
 		ToolBuilders: []ToolBuilder{failToolBuilder()},
 	})
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	_, err := mgr.Load(context.Background(), "session-1", "fail-skill", "user-1")
 	if err == nil {
@@ -129,7 +129,7 @@ func TestSessionIsolation(t *testing.T) {
 		Instructions: "iso-instructions",
 		ToolBuilders: []ToolBuilder{mockToolBuilder("iso_tool")},
 	})
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	// session-A 加载
 	_, err := mgr.Load(context.Background(), "session-A", "iso-skill", "user-A")
@@ -166,7 +166,7 @@ func TestExecuteTool(t *testing.T) {
 		Instructions: "exec-instructions",
 		ToolBuilders: []ToolBuilder{mockToolBuilder("exec_tool")},
 	})
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	_, err := mgr.Load(context.Background(), "session-exec", "exec-skill", "user-123")
 	if err != nil {
@@ -194,7 +194,7 @@ func TestExecuteTool(t *testing.T) {
 // TestExecuteToolNotLoaded 执行未加载的工具应返回错误
 func TestExecuteToolNotLoaded(t *testing.T) {
 	reg := NewRegistry()
-	mgr := NewManager(reg)
+	mgr := NewManager(reg, nil)
 
 	call := llm.ToolCall{
 		ID: "call-1",
