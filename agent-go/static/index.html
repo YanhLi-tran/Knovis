@@ -2209,6 +2209,7 @@
             <div class="modal-body">
                 <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:8px;background:rgba(99,102,241,0.06);margin-bottom:16px;">
                     <span>连接状态：</span><strong id="laStatus" style="font-size:13px;">检测中...</strong>
+                    <button class="btn btn-primary btn-sm" id="laReconnectBtn" style="margin-left:auto;">🔄 重新连接</button>
                 </div>
                 <div class="form-group">
                     <label class="form-label">下载客户端</label>
@@ -2765,6 +2766,51 @@ function updateLocalAgentBadge() {
     if (st) {
         st.textContent = localAgentStatusText();
         st.style.color = State.localAgentStatus === 'connected' ? '#22c55e' : '#ef4444';
+    }
+}
+
+// reconnectLocalAgent 手动刷新并重新连接 local-agent
+// 步骤：探测本地控制服务 → 重新推送当前用户 token 激活 → 重新检测连接状态 → 兜底重连 WS
+async function reconnectLocalAgent() {
+    const btn = $('laReconnectBtn');
+    const st = $('laStatus');
+    btn.disabled = true; btn.textContent = '连接中...';
+    if (st) { st.textContent = '连接中...'; st.style.color = '#f59e0b'; }
+    try {
+        // 1) 探测本地控制服务是否在线
+        const r0 = await fetch('http://127.0.0.1:17000/status', { cache: 'no-store' });
+        if (!r0.ok) throw new Error('本地控制服务不可达');
+        const d0 = await r0.json();
+        if (!d0.running) throw new Error('local-agent 未运行');
+
+        // 2) 有 token 则重新推送激活（让 local-agent 用当前用户身份重连 WS）
+        if (State.token) {
+            const r1 = await fetch('http://127.0.0.1:17000/activate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ token: State.token })
+            });
+            if (!r1.ok) throw new Error('激活失败，请确认已登录');
+        }
+
+        // 3) 兜底重连 WS
+        connectWS();
+
+        // 4) 重新检测连接状态
+        await checkLocalAgentStatus();
+
+        if (State.localAgentStatus === 'connected') {
+            toast('success', '本地 Agent 已重连', '文件写入/沙箱执行可用');
+        } else {
+            toast('warning', '仍未连接', 'local-agent 已运行但 WS 未连上，稍后重试或重新登录');
+        }
+    } catch (e) {
+        State.localAgentStatus = 'disconnected';
+        updateLocalAgentBadge();
+        if (st) { st.textContent = '未连接'; st.style.color = '#ef4444'; }
+        toast('error', '重连失败', e.message || '无法连接 local-agent');
+    } finally {
+        btn.disabled = false; btn.textContent = '🔄 重新连接';
     }
 }
 
@@ -4623,6 +4669,7 @@ function bindEvents() {
 
     // 本地 Agent 引导弹窗
     $('laClose').onclick = () => closeModal('localAgentModal');
+    $('laReconnectBtn').onclick = () => { void reconnectLocalAgent(); };
 
     $('apiKeySave').onclick = saveLLMKey;
     $('apiKeyDelete').onclick = deleteLLMKey;
