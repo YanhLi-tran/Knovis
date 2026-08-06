@@ -83,6 +83,32 @@ docker-compose down -v
 
 ---
 
+## local-agent（用户本地执行器）
+
+文件读写 / grep / 沙箱执行等工具需要用户**本地机器**运行 local-agent 客户端（服务器只下发指令，实际读写发生在用户本机，受 `--workdir` 工作区沙箱约束）。
+
+### 获取（三选一）
+
+| 方式 | 说明 |
+| --- | --- |
+| **GitHub Releases 下载**（推荐） | 打 tag 自动构建四平台产物（Windows/Linux/macOS x64 + Apple Silicon），从 Releases 页下载对应平台文件 |
+| 源码编译 | `./scripts/build-local-agent.sh`（跨平台）或 `cd local-agent && go build -o local-agent.exe .` |
+| 仓库本地 | `local-agent/local-agent.exe`（仅本地，不入库） |
+
+前端登录后会自动激活本机 local-agent；右上角头像 → **本地 Agent** 可查看下载入口、平台文件与启动步骤。
+
+### 启动
+
+```bash
+# 本机部署（默认 ws://127.0.0.1:8001）
+./local-agent.exe
+
+# 服务器部署：指定服务器地址与工作目录
+./local-agent.exe --server ws://<服务器IP>:8001 --workdir E:/agent-workspace
+```
+
+登录/注册后前端自动把当前用户 token 推送给 local-agent（`POST 127.0.0.1:17000/activate`），userID 始终与当前登录用户一致。
+
 ## Knovis 用户与动态数据服务
 
 基于 **go-zero** 框架重写的「用户 + 动态」内容空间后端（仿照 AIWallHub，仅保留用户与动态两个模块）。
