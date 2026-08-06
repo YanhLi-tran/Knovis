@@ -2290,23 +2290,29 @@
                     <textarea class="form-textarea" id="ucPreferences" placeholder="如：偏好简洁回答，关注数据准确性"></textarea>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">连续工具轮数上限 <span class="opt">模型可连续调用工具的轮数（1~50，默认 10）</span></label>
-                    <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" />
-                </div>
-                <div class="form-group">
-                    <label class="form-label">沙箱权限模式</label>
-                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="ask" checked /> 询问 <span class="form-help" style="display:inline;">需审批的工具每次询问</span></label>
-                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="auto" /> 自动 <span class="form-help" style="display:inline;">需审批的工具自动批准</span></label>
-                        <label class="radio-label"><input type="radio" name="ucSandboxMode" value="yolo" /> YOLO <span class="form-help" style="display:inline;">全自动+高危命令放行+删除备份</span></label>
+                    <label class="form-label">Agent 行为设置</label>
+                    <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
+                        <div>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">1~50，默认10</span></label>
+                            <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" style="width:110px;" />
+                        </div>
+                        <div>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">沙箱权限模式</label>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="ask" checked /> 询问</label>
+                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="auto" /> 自动</label>
+                                <label class="radio-label"><input type="radio" name="ucSandboxMode" value="yolo" /> YOLO</label>
+                            </div>
+                        </div>
+                        <div>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">文件备份方式 <span class="opt">YOLO 生效</span></label>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照</label>
+                                <label class="radio-label"><input type="radio" name="ucBackupMode" value="git" /> Git</label>
+                            </div>
+                        </div>
                     </div>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">文件备份方式 <span class="opt">YOLO 模式生效</span></label>
-                    <div style="display:flex;gap:16px;flex-wrap:wrap;">
-                        <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照备份 <span class="form-help" style="display:inline;">操作前复制到 .backup/</span></label>
-                        <label class="radio-label"><input type="radio" name="ucBackupMode" value="git" /> Git 版本控制 <span class="form-help" style="display:inline;">workspace 用 git 自动提交</span></label>
-                    </div>
+                    <div class="form-help">询问=需审批工具每次询问 · 自动=自动批准 · YOLO=全自动+高危命令放行+删除/覆盖前备份可回退</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">原始文本 <span class="opt">可选，便于直接注入</span></label>
