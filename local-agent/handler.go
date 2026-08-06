@@ -131,6 +131,15 @@ func fileWrite(args map[string]any) (string, string) {
 	if path == "" {
 		return "", "缺少参数 path"
 	}
+
+	// P9: yolo 模式覆盖已有文件前先备份（可回退）+ git 版本控制
+	yolo, backupMode := yoloMode(args)
+	if yolo && mode != "append" {
+		if _, serr := os.Stat(path); serr == nil {
+			backupPath(path, "write", backupMode)
+		}
+	}
+
 	if mode == "append" {
 		f, openErr := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if openErr != nil {
@@ -143,6 +152,10 @@ func fileWrite(args map[string]any) (string, string) {
 	}
 	if err != nil {
 		return "", fmt.Sprintf("写入失败: %v", err)
+	}
+	// P9: yolo + git 模式提交版本
+	if yolo {
+		yoloAfterHook(backupMode, "yolo file_write: "+path)
 	}
 	return fmt.Sprintf(`{"status":"ok","path":"%s","mode":"%s","bytes":%d}`, path, mode, len(content)), ""
 }
@@ -250,6 +263,9 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 		return "", "缺少参数 command"
 	}
 
+	// P9: yolo 透传标记（跳过白名单 + 删除前备份 + 版本控制）
+	yolo, backupMode := yoloMode(args)
+
 	// 白名单校验（取命令第一个 token 的命令名）
 	tokens := strings.Fields(command)
 	if len(tokens) == 0 {
@@ -258,7 +274,15 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 	cmdName := filepath.Base(tokens[0])
 	cmdName = strings.TrimSuffix(cmdName, ".exe") // Windows 兼容
 	if !sandboxWhitelist[cmdName] {
-		return "", fmt.Sprintf("命令 %q 不在白名单内（白名单内免审批，白名单外需服务端审批）", cmdName)
+		if !yolo {
+			return "", fmt.Sprintf("命令 %q 不在白名单内（白名单内免审批，白名单外需服务端审批）", cmdName)
+		}
+		logf("[yolo] 白名单外命令放行: %q (backup=%s)", command, backupMode)
+	}
+
+	// P9: yolo 删除类命令执行前备份目标（可回退）
+	if yolo && isDeleteCommand(cmdName) {
+		backupDeleteTargets(tokens, backupMode)
 	}
 
 	// 工作目录（可选，默认 agent 工作区）
@@ -307,7 +331,16 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 		if ctx.Err() == context.DeadlineExceeded {
 			return output, fmt.Sprintf("命令执行超时（%v）", timeout)
 		}
+		// P9: yolo 模式下错误不中断（尽力而为，留痕后返回）
+		if yolo {
+			logf("[yolo] 命令失败但已放行（留痕）: %q err=%v", command, err)
+			return output, fmt.Sprintf("命令执行失败（yolo 模式放行）: %v", err)
+		}
 		return output, fmt.Sprintf("命令执行失败: %v", err)
+	}
+	// P9: yolo + git 模式提交版本
+	if yolo {
+		yoloAfterHook(backupMode, "yolo exec: "+command)
 	}
 	return output, ""
 }
