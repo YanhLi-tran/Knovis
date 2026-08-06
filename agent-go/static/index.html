@@ -3165,9 +3165,20 @@ function finalizeAnswer(answer) {
 
 function regenerateLast() {
     if (!State.lastQuery || State.isStreaming) return;
-    const q = State.lastQuery;
-    State.currentSessionId = State.currentSessionId; // 保持当前会话
-    queryInput.value = q;
+    // 移除上一轮的用户消息与助手回复，避免重新生成时内容重复堆叠
+    const inner = $('chatContainer').querySelector('.chat-inner');
+    const msgs = inner.querySelectorAll('.message');
+    if (msgs.length >= 2) {
+        const last = msgs[msgs.length - 1];
+        const prev = msgs[msgs.length - 2];
+        if (prev.classList.contains('user') && last.classList.contains('assistant')) {
+            prev.remove();
+            last.remove();
+        } else if (last.classList.contains('user') || last.classList.contains('assistant')) {
+            last.remove();
+        }
+    }
+    queryInput.value = State.lastQuery;
     sendMessage();
 }
 
