@@ -1718,12 +1718,53 @@
                     <input type="password" class="form-input" id="loginPassword" placeholder="••••••••" autocomplete="off" />
                 </div>
                 <div class="form-help">
-                    登录调用 Knovis <code style="background:rgba(99,102,241,0.08);padding:1px 5px;border-radius:3px;font-size:11px;">POST http://localhost:8080/login</code>，返回 access_token 加密存于 localStorage。
+                    登录调用 Knovis <code style="background:rgba(99,102,241,0.08);padding:1px 5px;border-radius:3px;font-size:11px;">POST /api/auth/login</code>，返回 access_token 加密存于 localStorage。
+                </div>
+                <div class="form-help" style="text-align:center;margin-top:12px;">
+                    还没有账号？<a href="javascript:void(0)" id="loginGoRegister" style="color:var(--accent);font-weight:600;">立即注册</a>
                 </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="loginCancel">取消</button>
                 <button class="btn btn-primary" id="loginSubmit">登录</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 注册 Modal -->
+    <div class="modal-backdrop" id="registerModal">
+        <div class="modal-dialog" style="max-width:420px;">
+            <div class="modal-header">
+                <div class="modal-icon">📝</div>
+                <div class="modal-titles">
+                    <h3>注册 Knovis 账号</h3>
+                    <div class="modal-sub">注册成功后自动登录，即可开始使用 Agent</div>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">用户名 <span class="opt">1-20 字符</span></label>
+                    <input type="text" class="form-input" id="registerUsername" placeholder="如：knovis_user" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">邮箱</label>
+                    <input type="email" class="form-input" id="registerEmail" placeholder="user@example.com" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">密码 <span class="opt">≥6 位，仅字母/数字/下划线</span></label>
+                    <input type="password" class="form-input" id="registerPassword" placeholder="••••••••" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label class="form-label">确认密码</label>
+                    <input type="password" class="form-input" id="registerConfirm" placeholder="••••••••" autocomplete="off" />
+                </div>
+                <div class="form-help" style="text-align:center;margin-top:12px;">
+                    已有账号？<a href="javascript:void(0)" id="registerGoLogin" style="color:var(--accent);font-weight:600;">直接登录</a>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="registerCancel">取消</button>
+                <button class="btn btn-primary" id="registerSubmit">注册并登录</button>
             </div>
         </div>
     </div>
@@ -2487,6 +2528,26 @@ function dismissLoginModal() {
 /* ========================================================================
  * 鉴权模块
  * ====================================================================== */
+// performLogin 用邮箱密码执行登录（doLogin / doRegister 共用）
+async function performLogin(email, password, modalId) {
+    const resp = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+    });
+    if (!resp.ok) throw new Error(await readApiError(resp));
+    const data = await resp.json();
+    const token = data.access_token || data.token;
+    if (!token) throw new Error('登录响应缺少 access_token');
+    State.token = token;
+    localStorage.setItem('knovis_token', token);
+    if (modalId) closeModal(modalId);
+    toast('success', '登录成功', '正在加载用户信息...');
+    await loadUserInfo();
+    connectWS();
+    if (_loginOnClose) { const cb = _loginOnClose; _loginOnClose = null; cb(); }
+}
+
 async function doLogin() {
     const email = $('loginEmail').value.trim();
     const password = $('loginPassword').value;
@@ -2494,27 +2555,39 @@ async function doLogin() {
     const btn = $('loginSubmit');
     btn.disabled = true; btn.textContent = '登录中...';
     try {
-        const resp = await fetch('/api/auth/login', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email, password })
-        });
-        if (!resp.ok) throw new Error(await readApiError(resp));
-        const data = await resp.json();
-        const token = data.access_token || data.token;
-        if (!token) throw new Error('登录响应缺少 access_token');
-        State.token = token;
-        localStorage.setItem('knovis_token', token);
-        $('loginPassword').value = '';
-        closeModal('loginModal');
-        toast('success', '登录成功', '正在加载用户信息...');
-        await loadUserInfo();
-        connectWS();
-        if (_loginOnClose) { const cb = _loginOnClose; _loginOnClose = null; cb(); }
+        await performLogin(email, password, 'loginModal');
     } catch (e) {
         toast('error', '登录失败', e.message);
     } finally {
         btn.disabled = false; btn.textContent = '登录';
+    }
+}
+
+// doRegister 注册 Knovis 账号（验证码校验已在服务端注释，无需邮箱验证码）
+async function doRegister() {
+    const username = $('registerUsername').value.trim();
+    const email = $('registerEmail').value.trim();
+    const password = $('registerPassword').value;
+    const confirm = $('registerConfirm').value;
+    if (!username || !email || !password || !confirm) { toast('warning', '请填写', '请填写完整的注册信息'); return; }
+    if (password !== confirm) { toast('warning', '密码不一致', '两次输入的密码不一致'); return; }
+    const btn = $('registerSubmit');
+    btn.disabled = true; btn.textContent = '注册中...';
+    try {
+        const resp = await fetch('/api/auth/register', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, email, password, confirm_password: confirm, code: '' })
+        });
+        if (!resp.ok) throw new Error(await readApiError(resp));
+        // 注册成功：预填登录表单 + 自动登录
+        $('loginEmail').value = email;
+        $('loginPassword').value = '';
+        await performLogin(email, password, 'registerModal');
+    } catch (e) {
+        toast('error', '注册失败', e.message);
+    } finally {
+        btn.disabled = false; btn.textContent = '注册并登录';
     }
 }
 
@@ -3733,6 +3806,13 @@ function bindEvents() {
     $('loginSubmit').onclick = doLogin;
     $('loginCancel').onclick = dismissLoginModal;
     $('loginPassword').addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+    // 注册：登录 modal ↔ 注册 modal 互跳 + 提交
+    $('loginGoRegister').onclick = () => { closeModal('loginModal'); openModal('registerModal'); setTimeout(() => $('registerUsername').focus(), 100); };
+    $('registerGoLogin').onclick = () => { closeModal('registerModal'); openModal('loginModal'); setTimeout(() => $('loginEmail').focus(), 100); };
+    $('registerSubmit').onclick = doRegister;
+    $('registerCancel').onclick = () => closeModal('registerModal');
+    $('registerConfirm').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
 
     $('apiKeySave').onclick = saveLLMKey;
     $('apiKeyDelete').onclick = deleteLLMKey;
