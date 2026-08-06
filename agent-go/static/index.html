@@ -3597,7 +3597,7 @@ async function triggerTTL() {
         const resp = await apiFetch('/memory/ttl/run', { method: 'POST' });
         if (!resp.ok) throw new Error(await readApiError(resp));
         const data = await resp.json();
-        toast('success', '归档完成', '已归档 ' + (data.archived || data.count || 0) + ' 条记忆');
+        toast('success', '归档完成', '已归档 ' + (data.archived_count ?? data.archived ?? data.count ?? 0) + ' 条记忆');
     } catch (e) { toast('error', '执行失败', e.message); }
 }
 
@@ -3607,7 +3607,7 @@ async function triggerMessageTTL() {
         const resp = await apiFetch('/memory/message-ttl/run', { method: 'POST' });
         if (!resp.ok) throw new Error(await readApiError(resp));
         const data = await resp.json();
-        toast('success', '清理完成', '已清理 ' + (data.cleaned || data.count || 0) + ' 条消息');
+        toast('success', '清理完成', '已清理 ' + (data.deleted_count ?? data.cleaned ?? data.count ?? 0) + ' 条消息');
     } catch (e) { toast('error', '执行失败', e.message); }
 }
 
