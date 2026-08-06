@@ -12,48 +12,14 @@ import (
 	"agent-go/internal/tools/skill"
 )
 
-// KBSummarySkillName Skill 唯一标识
+// KBSummarySkillName Skill 唯一标识（与 skills/kb_summary/SKILL.md 的 name 一致）
 const KBSummarySkillName = "kb_summary"
 
-// NewKBSummarySkillDefinition 创建企业知识库总结 Skill 定义
-// 定位：用户要求对企业知识库内容做总结/概括时按需加载（低频复杂 → Skill，不常驻 context）。
-//
-// 设计（路线 2）：Skill 只提供"确定范围"的工具 kb_list_docs（列文档），
-// 内容检索复用常驻 FC 工具 rag_search —— Instructions 引导 LLM：
-//   1. kb_list_docs 拿 doc_id 列表（按公司/全库/指定文档）确定总结范围；
-//   2. 分主题调用 rag_search（务必传 doc_ids 限定范围）逐主题检索；
-//   3. 汇总为表格形式总结（贴合用户需求、标注来源、不臆想、缺口兜底）。
-//
-// 无需用户 token（doc-service 为内部服务），ToolBuilder 直接绑定 docClient。
-func NewKBSummarySkillDefinition(docClient *rag.DocClient) *skill.SkillDefinition {
-	instructions := `企业知识库总结工具已加载。总结流程：
-1. 先调用 kb_list_docs 查看文档列表，确定总结范围（全库 / 某公司 company_code / 指定文档），并记录目标 doc_id。
-2. 将总结目标拆分为主题（如：财务数据、业务结构、风险事项、战略规划），对每个主题调用 rag_search 检索；务必传入 kb_list_docs 得到的 doc_ids 限定范围，确保内容来自目标文档。
-3. 汇总检索结果，以表格形式输出总结。
-
-输出要求（严格遵守）：
-- 用表格呈现总结；表格的列/行结构由你根据内容自行设计，但必须贴合用户的具体需求（如按公司、按年度、按主题、按文档）。
-- 内容简洁明了，要点尽量带数据；每个要点标注来源，格式：[来源: 文档名, p页码, 章节]。
-- 只能基于检索结果总结，禁止臆想或编造；某主题检索不到内容时如实说明"未找到相关记录"。
-- 用户有特殊规定（指定维度、篇幅、格式等）时，优先按用户要求输出，再套用表格形式。
-- 信息不足无法完整总结时，说明缺口并兜底回复，不要强行填充。`
-
-	return &skill.SkillDefinition{
-		Metadata: skill.SkillMetadata{
-			Name:        KBSummarySkillName,
-			Description: "总结企业知识库内容（按公司/指定文档/全库范围，表格形式输出）",
-			Trigger:     "用户要求总结/概括企业知识库、公司文档、指定文档的内容时",
-		},
-		Instructions: instructions,
-		ToolBuilders: []skill.ToolBuilder{
-			buildKBListDocs(docClient),
-		},
-	}
-}
-
-// ===== 工具：kb_list_docs（列出知识库文档，确定总结范围）=====
-
-func buildKBListDocs(docClient *rag.DocClient) skill.ToolBuilder {
+// BuildKBListDocs 构建 kb_list_docs 工具（文件型 skill kb_summary 的内置 Go 工具）
+// kb_summary 由 SKILL.md 驱动（skills/kb_summary/SKILL.md）：正文定义总结流程，
+// 本工具负责"确定总结范围"（列文档），内容检索复用常驻 FC 工具 rag_search。
+// main.go 通过 skillReg.AttachToolBuilders 附加到已从 SKILL.md 加载的 kb_summary 定义上。
+func BuildKBListDocs(docClient *rag.DocClient) skill.ToolBuilder {
 	return func(ctx context.Context, userID string) (llm.ToolDefinition, tools.ToolHandler, error) {
 		return llm.ToolDefinition{
 			Type: "function",

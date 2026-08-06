@@ -117,7 +117,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		}
 
 		// 组装 system prompt（skill 注册表在此注入，静态，一次性构建）
-		systemPrompt := o.buildSystemPrompt(memoryBlock)
+		systemPrompt := o.buildSystemPrompt(memoryBlock, userID)
 		// toolDefs 在 OTACO 循环内每轮构建：load_skill 执行后下一轮需包含新加载的 skill 工具
 
 		// 加载历史（如果有 sessionID）
@@ -744,9 +744,10 @@ func (o *Orchestrator) handleAskUser(ctx context.Context, ch chan<- SSEEvent, ca
 
 // buildSystemPrompt 组装 system prompt
 // memoryBlock 为 P2 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5），插入到工具列表之后、当前时间之前
+// userID 用于 Skill 注册表按用户过滤（用户私有 skill 仅 owner 可见）
 // 注入顺序（KV Cache 友好：稳定内容靠前，易变靠后）：
 //   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定) → memoryBlock(易变) → 当前时间(最易变)
-func (o *Orchestrator) buildSystemPrompt(memoryBlock string) string {
+func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string) string {
 	var sb strings.Builder
 
 	appCfg := o.configMgr.GetAppConfig()
@@ -845,7 +846,7 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string) string {
 	// 顺序（KV Cache 友好）：soul → rule_basic → OTACO流程 → 工具列表 → skill 注册表 → memoryBlock → 当前时间
 	// Skill 元信息每个约 25 tokens，详细 schema 由 load_skill 按需拉取
 	if o.skillReg != nil {
-		skillBlock := skill.BuildSkillRegistryBlock(o.skillReg.List())
+		skillBlock := skill.BuildSkillRegistryBlock(o.skillReg.List(userID))
 		if skillBlock != "" {
 			sb.WriteString(skillBlock)
 		}

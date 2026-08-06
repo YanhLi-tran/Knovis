@@ -11,35 +11,19 @@ import (
 	"agent-go/internal/tools/skill"
 )
 
-// KnovisSkillName Skill 唯一标识
+// KnovisSkillName Skill 唯一标识（与 skills/knovis/SKILL.md 的 name 一致）
 const KnovisSkillName = "knovis"
 
-// NewKnovisSkillDefinition 创建 Knovis Skill 定义（只读：Knovis 不实现社交互动模块）
-// 低频复杂工具 → 封装 Skill：详细 schema 常驻浪费 context，load_skill 按需拉取。
-// 用户不主动询问动态/用户资料时，load_skill 不会触发；触发后常驻到对话结束。
-//
-// Token 安全：用户 Knovis token 走 AES-256-GCM 加密存储（auth.AuthService 管理），
-// load_skill 时解密传入 ToolBuilder，明文仅存在于内存闭包，不落库不日志
-func NewKnovisSkillDefinition(authSvc *auth.AuthService, client *knovis.Client) *skill.SkillDefinition {
-	instructions := `Knovis 只读查询工具已加载。可用操作：
-- knovis_get_feed: 获取动态流（读操作，分页 page/page_size）
-- knovis_get_profile: 获取用户资料（读操作，可查自己或他人）
-- knovis_get_post: 获取动态详情（读操作）
-
-注意：Knovis 不提供点赞/评论/关注/发帖等社交互动接口，相关写操作请在 Knovis 前端完成。`
-
-	return &skill.SkillDefinition{
-		Metadata: skill.SkillMetadata{
-			Name:        KnovisSkillName,
-			Description: "Knovis 用户与动态查询（查动态流/动态详情/用户资料），用户需已设置 Knovis token",
-			Trigger:     "用户询问 Knovis 动态流、帖子、用户资料等社交数据时",
-		},
-		Instructions: instructions,
-		ToolBuilders: []skill.ToolBuilder{
-			buildGetFeed(authSvc, client),
-			buildGetProfile(authSvc, client),
-			buildGetPost(authSvc, client),
-		},
+// KnovisToolBuilders 返回 knovis skill 的内置 Go 工具构建器（混合模式）
+// knovis 由 SKILL.md 驱动（skills/knovis/SKILL.md），执行依赖 Go 层能力：
+// 用户 Knovis token 走 AES-256-GCM 加密存储（auth.AuthService 管理），
+// 明文仅存在于内存闭包（load_skill 时解密），不落库不日志，脚本无法替代。
+// main.go 通过 skillReg.AttachToolBuilders 附加到已从 SKILL.md 加载的 knovis 定义上。
+func KnovisToolBuilders(authSvc *auth.AuthService, client *knovis.Client) []skill.ToolBuilder {
+	return []skill.ToolBuilder{
+		BuildKnovisGetFeed(authSvc, client),
+		BuildKnovisGetProfile(authSvc, client),
+		BuildKnovisGetPost(authSvc, client),
 	}
 }
 
@@ -60,7 +44,8 @@ func resolveToken(ctx context.Context, authSvc *auth.AuthService, userID string)
 
 // ===== 读操作（免审批）=====
 
-func buildGetFeed(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
+// BuildKnovisGetFeed 构建动态流查询工具
+func BuildKnovisGetFeed(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
 	return func(ctx context.Context, userID string) (llm.ToolDefinition, tools.ToolHandler, error) {
 		token, err := resolveToken(ctx, authSvc, userID)
 		if err != nil {
@@ -99,7 +84,8 @@ func buildGetFeed(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBu
 	}
 }
 
-func buildGetProfile(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
+// BuildKnovisGetProfile 构建用户资料查询工具
+func BuildKnovisGetProfile(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
 	return func(ctx context.Context, userID string) (llm.ToolDefinition, tools.ToolHandler, error) {
 		token, err := resolveToken(ctx, authSvc, userID)
 		if err != nil {
@@ -127,7 +113,8 @@ func buildGetProfile(authSvc *auth.AuthService, client *knovis.Client) skill.Too
 	}
 }
 
-func buildGetPost(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
+// BuildKnovisGetPost 构建动态详情查询工具
+func BuildKnovisGetPost(authSvc *auth.AuthService, client *knovis.Client) skill.ToolBuilder {
 	return func(ctx context.Context, userID string) (llm.ToolDefinition, tools.ToolHandler, error) {
 		token, err := resolveToken(ctx, authSvc, userID)
 		if err != nil {

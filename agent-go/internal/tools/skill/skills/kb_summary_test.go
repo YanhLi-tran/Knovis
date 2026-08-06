@@ -2,28 +2,19 @@ package skills
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"agent-go/internal/rag"
+	"agent-go/internal/tools/skill"
 )
 
-// TestKBSummaryToolDefs kb_summary Skill 应注册 kb_list_docs 工具且定义符合预期
-// 设计（路线 2）：检索复用常驻 rag_search，skill 内只提供确定范围的 kb_list_docs
-func TestKBSummaryToolDefs(t *testing.T) {
-	def := NewKBSummarySkillDefinition(rag.NewDocClient(""))
-	if def.Metadata.Name != "kb_summary" {
-		t.Fatalf("Skill 名称应为 kb_summary，实际 %s", def.Metadata.Name)
-	}
-	if def.Metadata.Trigger == "" {
-		t.Fatal("kb_summary 应配置 Trigger 触发条件")
-	}
-	if len(def.ToolBuilders) != 1 {
-		t.Fatalf("路线 2 应有 1 个工具（kb_list_docs），实际 %d", len(def.ToolBuilders))
-	}
-
-	// 构建工具定义（无需 user token，直接绑定 docClient）
-	toolDef, handler, err := def.ToolBuilders[0](context.Background(), "any-user")
+// TestKBListDocsToolDef kb_list_docs 工具定义符合预期（内置 Go 工具，附加到 SKILL.md 定义的 kb_summary）
+func TestKBListDocsToolDef(t *testing.T) {
+	builder := BuildKBListDocs(rag.NewDocClient(""))
+	toolDef, handler, err := builder(context.Background(), "any-user")
 	if err != nil {
 		t.Fatalf("构建工具失败: %v", err)
 	}
@@ -35,20 +26,10 @@ func TestKBSummaryToolDefs(t *testing.T) {
 	}
 }
 
-// TestKBSummaryInstructions 总结 Instructions 应包含表格输出与不臆想约束
-func TestKBSummaryInstructions(t *testing.T) {
-	def := NewKBSummarySkillDefinition(rag.NewDocClient(""))
-	for _, want := range []string{"表格", "rag_search", "doc_ids", "禁止臆想", "兜底"} {
-		if !strings.Contains(def.Instructions, want) {
-			t.Fatalf("Instructions 应包含 %q，实际:\n%s", want, def.Instructions)
-		}
-	}
-}
-
 // TestKBListDocsHandler docClient 不可用时 handler 应返回友好错误而非 panic
 func TestKBListDocsHandler(t *testing.T) {
-	def := NewKBSummarySkillDefinition(rag.NewDocClient("http://127.0.0.1:1")) // 不可达端口
-	_, handler, err := def.ToolBuilders[0](context.Background(), "user-1")
+	builder := BuildKBListDocs(rag.NewDocClient("http://127.0.0.1:1")) // 不可达端口
+	_, handler, err := builder(context.Background(), "user-1")
 	if err != nil {
 		t.Fatalf("构建失败: %v", err)
 	}
@@ -59,5 +40,50 @@ func TestKBListDocsHandler(t *testing.T) {
 	}
 	if !strings.Contains(content, "获取失败") {
 		t.Fatalf("docClient 不可用时应返回友好错误文本，实际: %s", content)
+	}
+}
+
+// TestKBSummarySKILLMD 内置 SKILL.md（skills/kb_summary/）应能被解析且正文含表格输出约束
+func TestKBSummarySKILLMD(t *testing.T) {
+	mdPath := filepath.Join("..", "..", "..", "..", "skills", "kb_summary", "SKILL.md")
+	raw, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Skipf("内置 SKILL.md 不存在（%v），跳过", err)
+	}
+	name, desc, trigger, instructions, err := skill.ParseSKILLMD(string(raw))
+	if err != nil {
+		t.Fatalf("解析 SKILL.md 失败: %v", err)
+	}
+	if name != KBSummarySkillName {
+		t.Fatalf("name 应为 %s，实际 %s", KBSummarySkillName, name)
+	}
+	if desc == "" || trigger == "" {
+		t.Fatal("description/trigger 不应为空")
+	}
+	for _, want := range []string{"表格", "rag_search", "doc_ids", "禁止臆想", "兜底"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("正文应包含 %q，实际:\n%s", want, instructions)
+		}
+	}
+}
+
+// TestKnovisSKILLMD 内置 SKILL.md（skills/knovis/）应能被解析且正文提到内置工具
+func TestKnovisSKILLMD(t *testing.T) {
+	mdPath := filepath.Join("..", "..", "..", "..", "skills", "knovis", "SKILL.md")
+	raw, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Skipf("内置 SKILL.md 不存在（%v），跳过", err)
+	}
+	name, _, _, instructions, err := skill.ParseSKILLMD(string(raw))
+	if err != nil {
+		t.Fatalf("解析 SKILL.md 失败: %v", err)
+	}
+	if name != KnovisSkillName {
+		t.Fatalf("name 应为 %s，实际 %s", KnovisSkillName, name)
+	}
+	for _, want := range []string{"knovis_get_feed", "knovis_get_profile", "knovis_get_post"} {
+		if !strings.Contains(instructions, want) {
+			t.Fatalf("正文应包含 %q，实际:\n%s", want, instructions)
+		}
 	}
 }
