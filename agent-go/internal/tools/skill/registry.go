@@ -9,11 +9,14 @@ import (
 	"agent-go/internal/tools"
 )
 
-// SkillMetadata Skill 元信息（注入 system prompt，每个约 25 tokens）
+// SkillMetadata Skill 元信息（注入 system prompt，每个约 25-30 tokens）
 // LLM 据此判断是否需要 load_skill。常驻 context 只有元信息，详细 schema 由 load_skill 按需拉取。
+// Trigger 是显式触发条件：比 Description 更结构化地描述"用户什么需求时应该加载本 Skill"，
+// 帮助 LLM 精准判断，避免仅凭描述猜测导致的误加载/漏加载。
 type SkillMetadata struct {
-	Name        string // 唯一标识：knovis
+	Name        string // 唯一标识：knovis / kb_summary
 	Description string // 一句话描述（LLM 据此判断是否需要加载）
+	Trigger     string // 显式触发条件（用户表达何种需求时应加载本 Skill）
 }
 
 // SkillDefinition Skill 详细定义
@@ -69,7 +72,8 @@ func (r *Registry) Get(name string) (*SkillDefinition, bool) {
 }
 
 // BuildSkillRegistryBlock 构建 Skill 注册表文本（注入 system prompt）
-// 格式：每个 Skill 一行，约 25 tokens。注入位置：工具列表之后、记忆块之前（KV Cache 友好）
+// 格式：每个 Skill 一行（名称 + 描述 + 触发条件），约 25-30 tokens。
+// 注入位置：工具列表之后、记忆块之前（KV Cache 友好）
 func BuildSkillRegistryBlock(metaList []SkillMetadata) string {
 	if len(metaList) == 0 {
 		return ""
@@ -82,6 +86,11 @@ func BuildSkillRegistryBlock(metaList []SkillMetadata) string {
 		sb = append(sb, m.Name...)
 		sb = append(sb, ": "...)
 		sb = append(sb, m.Description...)
+		if m.Trigger != "" {
+			sb = append(sb, "（触发: "...)
+			sb = append(sb, m.Trigger...)
+			sb = append(sb, "）"...)
+		}
 		sb = append(sb, '\n')
 	}
 	return string(sb)

@@ -32,6 +32,7 @@ func NewKnovisSkillDefinition(authSvc *auth.AuthService, client *knovis.Client) 
 		Metadata: skill.SkillMetadata{
 			Name:        KnovisSkillName,
 			Description: "Knovis 用户与动态查询（查动态流/动态详情/用户资料），用户需已设置 Knovis token",
+			Trigger:     "用户询问 Knovis 动态流、帖子、用户资料等社交数据时",
 		},
 		Instructions: instructions,
 		ToolBuilders: []skill.ToolBuilder{
