@@ -27,12 +27,15 @@
 依赖: requests (标准库 + requests,不引入 pytest)
 """
 import argparse
+import http.client
 import json
 import os
 import re
+import socket
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlparse
 
 try:
     import requests
@@ -105,6 +108,9 @@ def delete_session(token: str, session_id: str):
 def chat_stream(token: str, query: str, session_id: str, llm_key: str, timeout: int):
     """调用 /chat/stream,逐行读取 SSE,返回事件列表 + 最终 answer + 时间效率指标.
 
+    使用 http.client 逐字节读取 SSE 流,确保不遗漏最后的 done 事件
+    (requests.iter_lines 在连接关闭时可能丢失最后几个事件).
+
     返回: {"events": [...], "answer": str, "tool_calls": [...], "tool_results": [...],
            "thoughts": str, "outputs": str, "error": str|None,
            "timing": {"ttft_ms": float, "total_ms": float, "output_chars": int,
@@ -119,9 +125,10 @@ def chat_stream(token: str, query: str, session_id: str, llm_key: str, timeout: 
     }
     if llm_key:
         headers["X-LLM-API-Key"] = llm_key
-    body = {"query": query}
+    body_dict = {"query": query}
     if session_id:
-        body["session_id"] = session_id
+        body_dict["session_id"] = session_id
+    body = json.dumps(body_dict).encode("utf-8")
 
     events = []
     tool_calls = []
@@ -138,79 +145,102 @@ def chat_stream(token: str, query: str, session_id: str, llm_key: str, timeout: 
     t_done = None
     first_event_type = ""
 
+    # 解析 AGENT_GO_URL 为 host + port
+    parsed = urlparse(AGENT_GO_URL)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 80
+
+    conn = None
     try:
-        resp = requests.post(
-            f"{AGENT_GO_URL}/chat/stream",
-            headers=headers, json=body, stream=True, timeout=timeout,
-        )
-        if resp.status_code != 200:
-            error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        conn = http.client.HTTPConnection(host, port, timeout=timeout)
+        conn.request("POST", "/chat/stream", body=body, headers=headers)
+        resp = conn.getresponse()
+        if resp.status != 200:
+            error = f"HTTP {resp.status}: {resp.read(200).decode('utf-8', errors='replace')}"
             return _pack(events, tool_calls, tool_results, thoughts_parts, output_parts, answer, error,
                          _build_timing(t_request_start, t_first_event, t_first_token, t_done, 0, first_event_type, len(events)))
 
-        for raw in resp.iter_lines(decode_unicode=True):
-            if not raw:
-                continue
-            line = raw.strip()
-            # 跳过 SSE 注释行(如 ": connected")
-            if line.startswith(":"):
-                continue
-            if not line.startswith("data:"):
-                continue
-            payload = line[len("data:"):].strip()
-            if not payload:
-                continue
-            try:
-                evt = json.loads(payload)
-            except json.JSONDecodeError:
-                continue
-            now = time.perf_counter()
-            if t_first_event is None:
-                t_first_event = now
-                first_event_type = evt.get("type", "")
-            etype = evt.get("type", "")
-            edata = evt.get("data", {}) or {}
-            events.append({"type": etype, "data": edata})
+        # 逐字节读取 SSE 流,确保不遗漏最后的 done 事件
+        # (requests.iter_lines 在连接关闭时可能丢失最后几个事件)
+        buffer = ""
+        while True:
+            chunk = resp.read(1)
+            if not chunk:
+                break
+            buffer += chunk.decode("utf-8", errors="replace")
+            # 处理完整的 SSE 事件(以 \n\n 分隔)
+            while "\n\n" in buffer:
+                event_str, buffer = buffer.split("\n\n", 1)
+                for line in event_str.split("\n"):
+                    line = line.strip()
+                    if line.startswith(":"):
+                        continue
+                    if not line.startswith("data:"):
+                        continue
+                    payload = line[len("data:"):].strip()
+                    if not payload:
+                        continue
+                    try:
+                        evt = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    now = time.perf_counter()
+                    if t_first_event is None:
+                        t_first_event = now
+                        first_event_type = evt.get("type", "")
+                    etype = evt.get("type", "")
+                    edata = evt.get("data", {}) or {}
+                    events.append({"type": etype, "data": edata})
 
-            # 首 token 判定:thought(streaming=true) 或 output(content 非空)
-            if t_first_token is None:
-                if etype == "thought" and edata.get("streaming"):
-                    t_first_token = now
-                elif etype == "output" and edata.get("content"):
-                    t_first_token = now
+                    # 首 token 判定:thought(streaming=true) 或 output(content 非空)
+                    if t_first_token is None:
+                        if etype == "thought" and edata.get("streaming"):
+                            t_first_token = now
+                        elif etype == "output" and edata.get("content"):
+                            t_first_token = now
 
-            if etype == "tool_call":
-                tool_calls.append({
-                    "tool_name": edata.get("tool_name", ""),
-                    "tool_call_id": edata.get("tool_call_id", ""),
-                    "arguments": edata.get("arguments", {}) or {},
-                })
-            elif etype == "tool_result":
-                tool_results.append({
-                    "tool_name": edata.get("tool_name", ""),
-                    "tool_call_id": edata.get("tool_call_id", ""),
-                    "content": edata.get("content", ""),
-                    "error": edata.get("error", ""),
-                })
-            elif etype == "thought":
-                if edata.get("streaming"):
-                    thoughts_parts.append(edata.get("content", ""))
-                elif edata.get("content"):
-                    thoughts_parts.append(edata.get("content", ""))
-            elif etype == "output":
-                if edata.get("content"):
-                    output_parts.append(edata.get("content", ""))
-            elif etype == "done":
-                answer = edata.get("answer", "") or ""
-                t_done = now
-            elif etype == "error":
-                error = edata.get("message") or edata.get("error") or "unknown error"
-                if t_done is None:
-                    t_done = now
-    except requests.exceptions.Timeout:
+                    if etype == "tool_call":
+                        raw_args = edata.get("arguments", {}) or {}
+                        # arguments 可能是 JSON 字符串(OpenAI FC 协议),需解析为 dict
+                        if isinstance(raw_args, str):
+                            try:
+                                raw_args = json.loads(raw_args)
+                            except json.JSONDecodeError:
+                                raw_args = {}
+                        tool_calls.append({
+                            "tool_name": edata.get("tool_name", ""),
+                            "tool_call_id": edata.get("tool_call_id", ""),
+                            "arguments": raw_args,
+                        })
+                    elif etype == "tool_result":
+                        tool_results.append({
+                            "tool_name": edata.get("tool_name", ""),
+                            "tool_call_id": edata.get("tool_call_id", ""),
+                            "content": edata.get("content", ""),
+                            "error": edata.get("error", ""),
+                        })
+                    elif etype == "thought":
+                        if edata.get("streaming"):
+                            thoughts_parts.append(edata.get("content", ""))
+                        elif edata.get("content"):
+                            thoughts_parts.append(edata.get("content", ""))
+                    elif etype == "output":
+                        if edata.get("content"):
+                            output_parts.append(edata.get("content", ""))
+                    elif etype == "done":
+                        answer = edata.get("answer", "") or ""
+                        t_done = now
+                    elif etype == "error":
+                        error = edata.get("message") or edata.get("error") or "unknown error"
+                        if t_done is None:
+                            t_done = now
+    except socket.timeout:
         error = f"SSE 读取超时({timeout}s)"
     except Exception as e:
         error = str(e)
+    finally:
+        if conn:
+            conn.close()
 
     # 若 done 未给出 answer,用 output 拼接兜底
     if not answer and output_parts:

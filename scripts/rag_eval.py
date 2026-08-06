@@ -192,7 +192,12 @@ def eval_case(case, search_resp, strategy):
     fused_cand = search_resp.get("fused_candidates", [])
     bm25_cand = search_resp.get("bm25_candidates", [])
     rag_cand = search_resp.get("rag_candidates", [])
+    reranked_cand = search_resp.get("reranked_candidates", [])
     results = search_resp.get("results", [])
+
+    # rerank 评测:当 reranked_candidates 非空时,用 rerank 后的候选计算 recall/MRR
+    # 否则用 fused_candidates(兼容 before 场景)
+    eval_cand = reranked_cand if reranked_cand else fused_cand
 
     expected_docs = case.get("expected_docs", [])
     expected_page = case.get("expected_page", [])
@@ -206,13 +211,14 @@ def eval_case(case, search_resp, strategy):
         "fused_count": len(fused_cand),
         "bm25_count": len(bm25_cand),
         "rag_count": len(rag_cand),
+        "reranked_count": len(reranked_cand),
         "results_count": len(results),
         "elapsed_ms": search_resp.get("elapsed_ms", 0),
         "reranked": search_resp.get("reranked", False),
-        "top1_score": float(fused_cand[0]["score"]) if fused_cand else 0.0,
+        "top1_score": float(eval_cand[0]["score"]) if eval_cand else 0.0,
         "top1_rag_raw": float(fused_cand[0].get("rag_raw_score", 0.0) or 0.0) if fused_cand else 0.0,
-        "top1_doc": fused_cand[0]["doc_name"] if fused_cand else "",
-        "top1_section": (fused_cand[0].get("section_id", "") if fused_cand else ""),
+        "top1_doc": eval_cand[0]["doc_name"] if eval_cand else "",
+        "top1_section": (eval_cand[0].get("section_id", "") if eval_cand else ""),
         "hit_docs": [],
         "miss_docs": list(expected_docs),
         # 分阶段耗时(毫秒,来自 doc-service /rag/search 响应)
@@ -225,25 +231,25 @@ def eval_case(case, search_resp, strategy):
         "total_ms": int(search_resp.get("total_ms", 0) or search_resp.get("elapsed_ms", 0) or 0),
     }
 
-    # 1) Recall@5 / 2) Recall@20
-    m["recall@5"] = recall_at_k(fused_cand, expected_docs, 5)
-    m["recall@20"] = recall_at_k(fused_cand, expected_docs, 20)
-    # 多路 Recall@20
+    # 1) Recall@5 / 2) Recall@20(用 rerank 后候选评测 rerank 影响)
+    m["recall@5"] = recall_at_k(eval_cand, expected_docs, 5)
+    m["recall@20"] = recall_at_k(eval_cand, expected_docs, 20)
+    # 多路 Recall@20(始终用原始路,不受 rerank 影响)
     m["bm25_recall@20"] = recall_at_k(bm25_cand, expected_docs, 20)
     m["rag_recall@20"] = recall_at_k(rag_cand, expected_docs, 20)
 
-    # 命中/未命中文档诊断
+    # 命中/未命中文档诊断(用评测候选)
     if expected_docs:
         hit_docs = set()
-        topk_docs = {c.get("doc_name", "") for c in fused_cand[:20]}
+        topk_docs = {c.get("doc_name", "") for c in eval_cand[:20]}
         for d in expected_docs:
             if d in topk_docs:
                 hit_docs.add(d)
         m["hit_docs"] = sorted(hit_docs)
         m["miss_docs"] = sorted(set(expected_docs) - hit_docs)
 
-    # 3) MRR
-    m["rr"] = reciprocal_rank(fused_cand, expected_docs)
+    # 3) MRR(用 rerank 后候选)
+    m["rr"] = reciprocal_rank(eval_cand, expected_docs)
 
     # 4) 段落召回命中率
     m["section_hit"] = section_hit(results, expected_section)
