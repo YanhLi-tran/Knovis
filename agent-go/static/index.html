@@ -3297,7 +3297,7 @@ async function loadDocuments() {
         if (!docs.length) { $('docsList').innerHTML = emptyStateSVG('上传 PDF 或扫描目录导入文档'); return; }
         $('docsList').innerHTML = docs.map(d => {
             const status = d.status || 'ready';
-            return '<div class="doc-item"><div class="doc-icon">📄</div><div class="doc-info"><div class="doc-name">' + escapeHtml(d.filename || d.title || d.name || '未命名') + '</div><div class="doc-meta">' + (d.company_code ? '<span class="meta-tag">' + escapeHtml(d.company_code) + '</span>' : '') + (d.chunks ? '<span>' + d.chunks + ' chunks</span>' : '') + '<span>' + formatTime(d.created_at) + '</span></div></div><span class="doc-status ' + status + '">' + status + '</span><button class="doc-delete" onclick="deleteDocument(' + d.id + ')">🗑</button></div>';
+            return '<div class="doc-item"><div class="doc-icon">📄</div><div class="doc-info"><div class="doc-name">' + escapeHtml(d.filename || d.title || d.name || '未命名') + '</div><div class="doc-meta">' + (d.company_code ? '<span class="meta-tag">' + escapeHtml(d.company_code) + '</span>' : '') + (d.total_chunks != null ? '<span>' + d.total_chunks + ' chunks</span>' : '') + '<span>' + formatTime(d.created_at) + '</span></div></div><span class="doc-status ' + status + '">' + status + '</span><button class="doc-delete" onclick="deleteDocument(' + d.id + ')">🗑</button></div>';
         }).join('');
     } catch (e) { $('docsList').innerHTML = '<div class="docs-empty">加载失败: ' + escapeHtml(e.message) + '</div>'; }
 }
@@ -3354,14 +3354,14 @@ async function runRagDebug() {
         $('ragStatBm25').textContent = data.bm25_count != null ? data.bm25_count : '-';
         $('ragStatRag').textContent = data.rag_count != null ? data.rag_count : '-';
         $('ragStatFused').textContent = data.fused_count != null ? data.fused_count : '-';
-        $('ragStatReturn').textContent = data.return_count != null ? data.return_count : (data.results || []).length;
+        $('ragStatReturn').textContent = (data.results || []).length;
         $('ragStatMs').textContent = data.elapsed_ms != null ? data.elapsed_ms : (data.ms != null ? data.ms : '-');
         const results = data.results || [];
         if (!results.length) { $('ragDebugResults').innerHTML = emptyStateSVG('无召回结果'); return; }
         $('ragDebugResults').innerHTML = results.map((r, i) => {
             let content = '';
             try { content = typeof r.content === 'string' ? r.content : (r.chunk || r.text || JSON.stringify(r)); } catch (e) { content = ''; }
-            return '<div class="rag-debug-item"><div class="rag-debug-item-head"><strong>#' + (i + 1) + '</strong> ' + escapeHtml(r.source || r.filename || r.doc_name || '') + (r.page ? ' <span class="src-page">P' + r.page + '</span>' : '') + '<span class="rag-debug-item-score">' + (r.score != null ? r.score.toFixed(4) : '') + '</span></div><div class="rag-debug-item-content">' + escapeHtml(content.slice(0, 300)) + '</div></div>';
+            return '<div class="rag-debug-item"><div class="rag-debug-item-head"><strong>#' + (i + 1) + '</strong> ' + escapeHtml(r.source || r.filename || r.doc_name || '') + (r.page_num ? ' <span class="src-page">P' + r.page_num + '</span>' : '') + '<span class="rag-debug-item-score">' + (r.score != null ? r.score.toFixed(4) : '') + '</span></div><div class="rag-debug-item-content">' + escapeHtml(content.slice(0, 300)) + '</div></div>';
         }).join('');
     } catch (e) { $('ragDebugResults').innerHTML = '<div class="docs-empty">检索失败: ' + escapeHtml(e.message) + '</div>'; }
 }
