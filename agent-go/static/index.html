@@ -1598,6 +1598,7 @@
             <button class="icon-btn" id="docsBtn" title="RAG 文档管理">📄</button>
             <button class="icon-btn" id="ragDebugBtn" title="检索调试">🔍</button>
             <button class="icon-btn" id="toolsBtn" title="工具清单">🧰</button>
+            <button class="icon-btn" id="skillsBtn" title="我的 Skill">📦</button>
             <button class="icon-btn" id="settingsBtn" title="设置">⚙️</button>
             <button class="icon-btn" id="apiKeyBtn" title="LLM API Key">🔑</button>
             <button class="icon-btn" id="clearBtn" title="清空当前显示">🧹</button>
@@ -2029,6 +2030,58 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="toolsRefresh">刷新</button>
                 <button class="btn btn-primary" id="toolsClose">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 我的 Skill Modal -->
+    <div class="modal-backdrop" id="skillsModal">
+        <div class="modal-dialog" style="max-width:760px;">
+            <div class="modal-header">
+                <div class="modal-icon">📦</div>
+                <div class="modal-titles">
+                    <h3>我的 Skill</h3>
+                    <div class="modal-sub">上传自定义 Skill：frontmatter（name/description/trigger）+ 正文工作流程 + scripts 执行代码。模型按你的 skill 创作，仅你自己可见可用。</div>
+                </div>
+                <button class="modal-close" data-close-modal="skillsModal">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label class="form-label">名称（name）<span style="color:var(--danger);">*</span></label>
+                    <input class="form-input" id="skillName" placeholder="如 my-blog-writer（字母/数字/下划线/短横线，≤64）">
+                    <div class="form-help">同时作为 skill 目录名与唯一标识，不可与内置 skill 重名</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">描述（description）<span style="color:var(--danger);">*</span></label>
+                    <input class="form-input" id="skillDesc" placeholder="一句话描述，注入注册表供模型判断是否加载">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">触发条件（trigger）</label>
+                    <input class="form-input" id="skillTrigger" placeholder="如：用户要求写博客/生成文章时">
+                    <div class="form-help">用户表达何种需求时应加载本 skill，帮助模型精准触发</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">工作流程正文（content_md）<span style="color:var(--danger);">*</span></label>
+                    <textarea class="form-input" id="skillContent" rows="8" placeholder="# 执行流程&#10;1. 确定输入...&#10;2. 生成...&#10;3. 输出要求（格式/约束）...&#10;&#10;（Markdown，加载时注入模型，引导创作步骤与输出）"></textarea>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">执行脚本（scripts，可选，可多选）</label>
+                    <input type="file" class="form-input" id="skillScripts" multiple>
+                    <div class="form-help">加载 skill 时自动同步到本地 workspace/skills/&lt;name&gt;/scripts/，正文中用 sandbox_exec 执行；单文件 ≤512KB</div>
+                </div>
+                <div class="session-toolbar" style="margin-top:8px;">
+                    <button class="btn btn-primary" id="skillUploadBtn">⬆ 上传 Skill</button>
+                    <span id="skillUploadMsg" style="font-size:12px;color:var(--text-muted);align-self:center;"></span>
+                </div>
+                <hr style="border-color:var(--border);margin:16px 0;">
+                <div class="form-label" style="margin-bottom:8px;">我的 Skill 列表</div>
+                <div id="mySkillList" class="tool-list-grid">
+                    <div class="docs-empty">加载中...</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="skillsRefresh">刷新</button>
+                <button class="btn btn-primary" data-close-modal="skillsModal">关闭</button>
             </div>
         </div>
     </div>
@@ -3786,6 +3839,81 @@ async function loadTools() {
 }
 
 /* ========================================================================
+ * 我的 Skill（用户上传的私有 Skill 管理）
+ * ====================================================================== */
+async function loadMySkills() {
+    $('mySkillList').innerHTML = renderSkeletonItems(2);
+    try {
+        const resp = await apiFetch('/skills/mine');
+        if (!resp.ok) throw new Error(await readApiError(resp));
+        const data = await resp.json();
+        const list = data.skills || [];
+        if (!list.length) { $('mySkillList').innerHTML = emptyStateSVG('还没有上传 Skill，用上方表单创建一个'); return; }
+        $('mySkillList').innerHTML = list.map(s => {
+            return '<div class="tool-list-item">' +
+                '<div class="tool-list-head">' +
+                    '<span class="tool-list-name">' + escapeHtml(s.name) + '</span>' +
+                    '<span class="tool-list-cat skill">' + (s.scripts || 0) + ' 脚本</span>' +
+                '</div>' +
+                '<div class="tool-list-desc">' + escapeHtml(s.description || '') + '</div>' +
+                '<div class="tool-list-desc" style="font-size:11px;color:var(--text-muted);margin-top:4px;">触发: ' + escapeHtml(s.trigger || '-') + ' · 创建于 ' + escapeHtml(s.created_at || '') + '</div>' +
+                '<div style="margin-top:6px;"><button class="btn btn-danger btn-sm" data-del-skill="' + escapeHtml(s.name) + '">删除</button></div>' +
+            '</div>';
+        }).join('');
+        $('mySkillList').querySelectorAll('[data-del-skill]').forEach(btn => {
+            btn.onclick = () => deleteSkill(btn.dataset.delSkill);
+        });
+    } catch (e) {
+        $('mySkillList').innerHTML = '<div class="docs-empty">加载失败: ' + escapeHtml(e.message) + '</div>';
+    }
+}
+
+async function uploadSkill() {
+    const name = $('skillName').value.trim();
+    const desc = $('skillDesc').value.trim();
+    const trigger = $('skillTrigger').value.trim();
+    const content = $('skillContent').value.trim();
+    const msgEl = $('skillUploadMsg');
+    msgEl.textContent = '';
+    if (!name) { msgEl.textContent = '名称不能为空'; return; }
+    if (!desc) { msgEl.textContent = '描述不能为空'; return; }
+    if (!content) { msgEl.textContent = '工作流程正文不能为空'; return; }
+
+    const fd = new FormData();
+    fd.append('name', name);
+    fd.append('description', desc);
+    fd.append('trigger', trigger);
+    fd.append('content_md', content);
+    const files = $('skillScripts').files;
+    for (const f of files) fd.append('scripts', f);
+
+    msgEl.textContent = '上传中...';
+    try {
+        const resp = await apiFetch('/skills/upload', { method: 'POST', body: fd });
+        if (!resp.ok) throw new Error(await readApiError(resp));
+        await resp.json();
+        msgEl.textContent = '✅ 上传成功';
+        $('skillName').value = ''; $('skillDesc').value = ''; $('skillTrigger').value = ''; $('skillContent').value = ''; $('skillScripts').value = '';
+        await loadMySkills();
+    } catch (e) {
+        msgEl.textContent = '❌ ' + e.message;
+    }
+}
+
+async function deleteSkill(name) {
+    const ok = await showConfirm({ title: '删除 Skill', msg: '确认删除 Skill「' + name + '」？删除后模型将不再加载它。', okText: '删除', danger: true });
+    if (!ok) return;
+    try {
+        const resp = await apiFetch('/skills/' + encodeURIComponent(name), { method: 'DELETE' });
+        if (!resp.ok) throw new Error(await readApiError(resp));
+        toast('success', '已删除', 'Skill「' + name + '」已删除');
+        await loadMySkills();
+    } catch (e) {
+        toast('error', '删除失败', e.message);
+    }
+}
+
+/* ========================================================================
  * WebSocket
  * ====================================================================== */
 function connectWS() {
@@ -3912,6 +4040,9 @@ function bindEvents() {
     $('docsBtn').onclick = () => { openModal('docsModal'); loadDocuments(); };
     $('ragDebugBtn').onclick = () => openModal('ragDebugModal');
     $('toolsBtn').onclick = () => { openModal('toolsModal'); loadTools(); };
+    $('skillsBtn').onclick = () => { openModal('skillsModal'); loadMySkills(); };
+    $('skillUploadBtn').onclick = uploadSkill;
+    $('skillsRefresh').onclick = loadMySkills;
     $('settingsBtn').onclick = () => { openModal('settingsModal'); loadKnovisTokenStatus(); };
     $('apiKeyBtn').onclick = () => { openModal('apiKeyModal'); loadLLMKeyStatus(); };
     $('clearBtn').onclick = () => { clearChatDisplay(); };
