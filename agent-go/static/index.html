@@ -2223,7 +2223,7 @@ const State = {
     wsReconnectTimer: null,
 };
 
-const KNOVIS_BASE = 'http://localhost:8080';  // Knovis 登录端点（跨域）
+const KNOVIS_BASE = '';  // Knovis 登录经 agent-go 反向代理(同源 /api/auth/login)
 
 /* ========================================================================
  * Client ID（dev 模式 owner 兜底；strict 模式下后端从 JWT 解析 userId 覆盖）
@@ -2494,7 +2494,7 @@ async function doLogin() {
     const btn = $('loginSubmit');
     btn.disabled = true; btn.textContent = '登录中...';
     try {
-        const resp = await fetch(KNOVIS_BASE + '/login', {
+        const resp = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ email, password })
@@ -3064,7 +3064,7 @@ function appendObservation(d) {
     const decision = d.decision || 'observe';
     const decColors = { pass: '#10b981', retry: '#f59e0b', observe: '#06b6d4', error: '#ef4444' };
     const decColor = decColors[decision] || '#06b6d4';
-    card.innerHTML = '<div class="observation-header"><span class="observation-icon">👁</span><span class="observation-title">Observation</span><span class="otaco-badge observation">第 ' + (d.iteration || 1) + ' 轮</span><span class="observation-decision" style="color:' + decColor + ';border-color:' + decColor + ';">' + decision + '</span><span class="observation-reason">' + escapeHtml(d.reason || '') + '</span><span class="observation-toggle">▶</span></div><div class="observation-body"><div class="observation-body-inner">' + escapeHtml(d.observation || '') + '</div></div>';
+    card.innerHTML = '<div class="observation-header"><span class="observation-icon">👁</span><span class="observation-title">Observation</span><span class="otaco-badge observation">第 ' + (d.iteration || 1) + ' 轮</span><span class="observation-decision" style="color:' + decColor + ';border-color:' + decColor + ';">' + decision + '</span><span class="observation-toggle">▶</span></div><div class="observation-body"><div class="observation-body-inner">' + escapeHtml(d.observation || d.reason || '') + '</div></div>';
     card.querySelector('.observation-header').onclick = () => card.classList.toggle('open');
     State.currentAssistantEl.appendChild(card);
     State.currentObservationEl = card;
@@ -3129,8 +3129,10 @@ function appendToolResult(d) {
     resultSection.style.display = '';
     const resultEl = card.querySelector('.tool-result');
     if (isError) resultEl.classList.add('error-text');
+    // 后端 tool_result 事件用 content 字段携带结果（兼容历史 result 字段）
+    const rawResult = d.content != null ? d.content : d.result;
     let resultDisplay = '';
-    try { resultDisplay = typeof d.result === 'string' ? d.result : JSON.stringify(d.result, null, 2); } catch (e) { resultDisplay = String(d.result); }
+    try { resultDisplay = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult, null, 2); } catch (e) { resultDisplay = String(rawResult); }
     if (d.error) resultDisplay = d.error;
     resultEl.textContent = resultDisplay;
     scrollToBottom();
