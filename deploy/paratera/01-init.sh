@@ -18,7 +18,7 @@ SHARED_DIR="/root/shared-nvme"
 PROJECT_DIR="$SHARED_DIR/knovis"
 MODELS_DIR="$SHARED_DIR/models"
 DATA_DIR="$SHARED_DIR/data"
-GO_VERSION="1.22.10"
+GO_VERSION="1.25.0"
 
 # ===== 0. 前置检查 =====
 info "===== Knovis 容器初始化开始 ====="
@@ -33,7 +33,7 @@ fi
 info "[1/7] 安装系统依赖（MySQL/Redis/Go 编译工具/Git）..."
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    mysql-server redis-server git wget curl tmux build-essential pkg-config \
+    mysql-server redis-server git wget curl tmux lsof build-essential pkg-config \
     > /dev/null
 info "系统依赖安装完成"
 

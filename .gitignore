@@ -78,4 +78,3 @@ agent-workspace/
 
 # ===== deploy/paratera（并行智算云部署）=====
 # 环境变量模板含敏感信息，不入库（脚本注释说明: cp .env.paratera .env 后本地编辑）
-deploy/paratera/.env.paratera
