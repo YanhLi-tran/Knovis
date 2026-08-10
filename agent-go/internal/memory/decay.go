@@ -9,7 +9,7 @@ import (
 	"agent-go/internal/storage"
 )
 
-// ==================== 记忆衰减(阶段 D P0) + 冷热分层(D P1) + 归档冻结(D P3) ====================
+// ==================== 记忆衰减(记忆生命周期 P0) + 冷热分层(D P1) + 归档冻结(D P3) ====================
 // 每日定时任务:
 //   - 03:00 记忆衰减扫描: 更新 effective_importance(跳过归档项目 + manual 豁免 + 30 天宽限)
 //   - 03:30 冷热分层迁移: hot→cold(importance<30 或 90 天未访问), 移出 Chroma
@@ -116,7 +116,7 @@ func (s *DecayScheduler) runDecaySweep(ctx context.Context) error {
 	start := time.Now()
 	log.Println("[decay-scheduler] ===== 开始执行记忆衰减扫描 =====")
 
-	// 方案 §3.4 的 SQL, 增加归档项目过滤(阶段 D P3)
+	// 方案 §3.4 的 SQL, 增加归档项目过滤(记忆生命周期 P3)
 	sql := `UPDATE agent_memories m
 	        INNER JOIN agent_projects p ON m.project_id = p.id
 	        SET m.effective_importance = GREATEST(10,

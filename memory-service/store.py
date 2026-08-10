@@ -79,7 +79,7 @@ def upsert_embeddings(
     # Chroma upsert 幂等（按 id 覆盖）
     col.upsert(ids=ids, embeddings=vectors, documents=contents, metadatas=metadatas)
     _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引(下次查询惰性重建)
-    _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
+    _invalidate_search_cache(project_id)  # 性能可观测 P1: 失效该项目检索结果缓存
     return len(ids)
 
 
@@ -91,7 +91,7 @@ def delete_embeddings(project_id: str, ids: List[str]) -> int:
         col = get_or_create_collection(project_id)
         col.delete(ids=ids)
         _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引
-        _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
+        _invalidate_search_cache(project_id)  # 性能可观测 P1: 失效该项目检索结果缓存
         return len(ids)
     except Exception as e:
         logger.warning("从 Chroma 删除向量失败 project=%s: %s", project_id, e)
@@ -108,7 +108,7 @@ def delete_collection(project_id: str) -> None:
     except Exception as e:
         logger.warning("删除 collection %s 失败: %s", name, e)
     _invalidate_bm25_index()      # 数据变更,失效 BM25 内存索引
-    _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
+    _invalidate_search_cache(project_id)  # 性能可观测 P1: 失效该项目检索结果缓存
 
 
 # ==================== MySQL BM25 ====================
@@ -246,7 +246,7 @@ def _invalidate_bm25_index():
 
 
 def _invalidate_search_cache(project_id: str):
-    """失效某项目的检索结果缓存(阶段 C P1, upsert/delete/delete_collection 时调用)."""
+    """失效某项目的检索结果缓存(性能可观测 P1, upsert/delete/delete_collection 时调用)."""
     try:
         from cache import invalidate_project_cache
         invalidate_project_cache(project_id)
@@ -321,7 +321,7 @@ def _normalize_scores(items: List[Dict[str, Any]], score_key: str = "score") -> 
     return items
 
 
-# ==================== 记忆衰减(阶段 D P0) ====================
+# ==================== 记忆衰减(记忆生命周期 P0) ====================
 
 def _apply_decay(memories: List[Dict[str, Any]], now=None) -> List[Dict[str, Any]]:
     """对检索结果应用衰减计算,更新 effective_importance(仅内存计算,不写库).
@@ -444,7 +444,7 @@ def hybrid_fuse(
         for r in kw:
             r["score"] *= 0.6
 
-    # 记忆衰减(阶段 D P0):懒计算 effective_importance,衰减严重的降权
+    # 记忆衰减(记忆生命周期 P0):懒计算 effective_importance,衰减严重的降权
     results = _apply_decay(results)
 
     # 排序取 top-k

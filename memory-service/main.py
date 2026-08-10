@@ -105,7 +105,7 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     bm25_count: int
     rag_count: int
-    cold_recall_count: int = Field(default=0, description="本次回填的冷记忆数(阶段D P1)")
+    cold_recall_count: int = Field(default=0, description="本次回填的冷记忆数(记忆生命周期 P1)")
     cold_recall_ids: List[str] = Field(default=[], description="回填的记忆ID")
 
 
@@ -188,7 +188,7 @@ def search(req: SearchRequest, request: Request = None):
     import time as _t
     _t0 = _t.perf_counter()
 
-    # A/B 实验参数覆盖(阶段 C P2): X-AB-Override header, 仅 AB_EXPERIMENT_MODE=true 时生效
+    # A/B 实验参数覆盖(性能可观测 P2): X-AB-Override header, 仅 AB_EXPERIMENT_MODE=true 时生效
     ab_overrides: Dict[str, str] = {}
     if request is not None and os.getenv("AB_EXPERIMENT_MODE", "false").lower() in ("true", "1", "yes"):
         hdr = request.headers.get("X-AB-Override", "")
@@ -205,7 +205,7 @@ def search(req: SearchRequest, request: Request = None):
 
     cache_hit = ""  # "" = 未命中 / l1_vector / l2_result
 
-    # 0) L2 结果缓存(阶段 C P1): 命中直接返回
+    # 0) L2 结果缓存(性能可观测 P1): 命中直接返回
     try:
         from cache import get_search_result, set_search_result
         cached = get_search_result(req.project_id, req.query, top_k)
@@ -222,7 +222,7 @@ def search(req: SearchRequest, request: Request = None):
     except Exception:
         pass  # 缓存不可用降级
 
-    # 1) RAG：query → vector(优先 L1 向量缓存, 阶段 C P1), 再查 Chroma
+    # 1) RAG：query → vector(优先 L1 向量缓存, 性能可观测 P1), 再查 Chroma
     rag_results: List[Dict[str, Any]] = []
     rag_failed = False
     _t1 = _t.perf_counter()
@@ -262,7 +262,7 @@ def search(req: SearchRequest, request: Request = None):
     _t4 = _t.perf_counter()
     _t_bm25 = (_t4 - _t3) * 1000
 
-    # 2.5) 冷记忆唤起(阶段 D P1): BM25 命中 cold 记忆 → 回填 Chroma + 改 tier
+    # 2.5) 冷记忆唤起(记忆生命周期 P1): BM25 命中 cold 记忆 → 回填 Chroma + 改 tier
     cold_recall_count = 0
     cold_recall_ids: List[str] = []
     try:
@@ -311,7 +311,7 @@ def search(req: SearchRequest, request: Request = None):
     _t_fuse = (_t6 - _t5) * 1000
     _t_total = (_t6 - _t0) * 1000
 
-    # 监控: 记录检索指标(阶段 C P0)
+    # 监控: 记录检索指标(性能可观测 P0)
     kw_triggered = any(getattr(r, "deweight_triggered", False) for r in results)
     _record_metric(req, None, _t, _t0, cache_hit, kw_triggered)
 
@@ -400,7 +400,7 @@ def delete_collection(project_id: str):
     return {"deleted": True}
 
 
-# ==================== 阶段 C P0: 在线监控 ====================
+# ==================== 性能可观测 P0: 在线监控 ====================
 
 @app.get("/metrics")
 def metrics(project_id: str = "", range: int = 1):

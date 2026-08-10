@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""在线监控:内存环形缓冲 + MySQL 分钟聚合 + percentiles 计算(阶段 C P0).
+"""在线监控:内存环形缓冲 + MySQL 分钟聚合 + percentiles 计算(性能可观测 P0).
 
 /search 每次调用记录一条 metrics entry 到环形缓冲(同步, ~0.01ms),
 同分钟聚合写入 MySQL memory_search_metrics(异步线程, 不阻断响应)。

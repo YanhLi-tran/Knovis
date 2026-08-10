@@ -17,7 +17,7 @@ type Service struct {
 	cfg    *config.Manager
 	repos  *storage.Repositories
 	client *MemoryClient
-	merger *Merger // 阶段 D P2: 记忆合并器
+	merger *Merger // 记忆生命周期 P2: 记忆合并器
 }
 
 // NewService 创建记忆服务

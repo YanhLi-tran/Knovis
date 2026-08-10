@@ -12,7 +12,7 @@ import (
 	"agent-go/internal/storage"
 )
 
-// ==================== 记忆合并(阶段 D P2) ====================
+// ==================== 记忆合并(记忆生命周期 P2) ====================
 // 触发: 项目记忆数 > MERGE_THRESHOLD(100)
 // 流程: 召回同主题 fact → 聚类(cluster_size>=3) → LLM 合并 → 生成 summary + 原 fact 标记 merged_at
 // 成本控制: 单次最多 MERGE_MAX_CLUSTERS(3) 簇, 每簇 1 次 LLM 调用
@@ -42,7 +42,7 @@ func (m *Merger) MaybeMerge(ctx context.Context, projectID, ownerID string, prov
 	if provider == nil {
 		return
 	}
-	// 归档项目冻结(阶段 D P3): 归档项目不合并
+	// 归档项目冻结(记忆生命周期 P3): 归档项目不合并
 	if p, err := m.svc.repos.Project.GetByID(projectID, ownerID); err == nil && p != nil && p.IsArchived {
 		return
 	}

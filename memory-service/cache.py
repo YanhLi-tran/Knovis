@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""检索两级缓存(阶段 C P1): Redis L1 向量缓存 + L2 结果缓存.
+"""检索两级缓存(性能可观测 P1): Redis L1 向量缓存 + L2 结果缓存.
 
 L1: query 向量缓存(key=qv:{sha256(query)[:16]}, TTL 2h, 不随记忆变更失效)
 L2: 检索结果缓存(key=sr:{project_id}:{sha256(query)[:16]}:{top_k}, TTL 60s, upsert/delete 失效)
