@@ -14,14 +14,17 @@ import (
 // Service 记忆服务：协调全局记忆 + 项目记忆的加载、检索、注入
 // 依赖：config.Manager（soul/rule 已在 orchestrator 注入，这里负责 user/project/memories）
 type Service struct {
-	cfg   *config.Manager
-	repos *storage.Repositories
+	cfg    *config.Manager
+	repos  *storage.Repositories
 	client *MemoryClient
+	merger *Merger // 阶段 D P2: 记忆合并器
 }
 
 // NewService 创建记忆服务
 func NewService(cfg *config.Manager, repos *storage.Repositories, client *MemoryClient) *Service {
-	return &Service{cfg: cfg, repos: repos, client: client}
+	s := &Service{cfg: cfg, repos: repos, client: client}
+	s.merger = NewMerger(s, repos)
+	return s
 }
 
 // LoadUserConfig 加载用户档案（Redis 缓存 → MySQL → 缓存回填）

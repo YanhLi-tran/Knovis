@@ -123,6 +123,11 @@ func main() {
 	msgTtlScheduler.Start()
 	defer msgTtlScheduler.Stop()
 
+	// 阶段 D: 启动记忆生命周期调度器（每日 03:00 衰减 / 03:30 冷热分层, 跳过归档项目）
+	decayScheduler := memory.NewDecayScheduler(memSvc, repos)
+	decayScheduler.Start()
+	defer decayScheduler.Stop()
+
 	// 创建 OTACO 编排器（P4: 注入 approvalMgr + skillMgr + skillReg）
 	// - approvalMgr: 需审批工具在 processToolCalls 拦截走审批流
 	// - skillMgr: load_skill 按需加载 + session 级工具执行

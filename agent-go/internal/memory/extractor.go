@@ -101,6 +101,12 @@ func (e *Extractor) MaybeLLMExtract(ctx context.Context, projectID, ownerID, ses
 	}
 
 	e.doLLMExtract(ctx, projectID, ownerID, sessionID, rounds, dialogText, provider)
+
+	// 阶段 D P2: 记忆合并(同主题 fact 聚类 → LLM 生成 summary)
+	// 每 5 轮触发一次, 复用 provider; 失败降级不影响主流程
+	if e.svc.merger != nil {
+		e.svc.merger.MaybeMerge(ctx, projectID, ownerID, provider)
+	}
 }
 
 // doLLMExtract 调 LLM 提取结构化记忆（流式收集完整 JSON 后解析）
@@ -214,7 +220,7 @@ func (e *Extractor) dedupAndCreate(ctx context.Context, projectID, ownerID, sess
 	}
 }
 
-// bumpExistingMemory 更新已存在记忆的 importance + last_accessed_at
+// bumpExistingMemory 更新已存在记忆的 importance + last_accessed_at + effective_importance
 func (e *Extractor) bumpExistingMemory(id, ownerID string) {
 	m, err := e.svc.repos.Memory.GetByID(id, ownerID)
 	if err != nil {
@@ -224,14 +230,29 @@ func (e *Extractor) bumpExistingMemory(id, ownerID string) {
 	if m == nil {
 		return
 	}
+	// 归档项目冻结(阶段 D P3): 归档项目记忆检索只读, 不更新任何字段
+	if p, err := e.svc.repos.Project.GetByID(m.ProjectID, ownerID); err == nil && p != nil && p.IsArchived {
+		return
+	}
 	newImp := m.Importance + importanceBump
 	if newImp > importanceMax {
 		newImp = importanceMax
 	}
-	if err := e.svc.repos.Memory.UpdateFields(id, ownerID, map[string]any{
-		"importance":       newImp,
-		"last_accessed_at": time.Now().UTC(),
-	}); err != nil {
+	// 衰减后的有效重要度同步 +5(上限 100)(阶段 D P0, 方案 §3.5)
+	newEff := m.EffectiveImportance + importanceBump
+	if newEff > importanceMax {
+		newEff = importanceMax
+	}
+	fields := map[string]any{
+		"importance":           newImp,
+		"effective_importance": newEff,
+		"last_accessed_at":     time.Now().UTC(),
+	}
+	// 唤起: hot 记忆命中时 last_accessed_at 更新后, 90 天窗口自动刷新(分层不会误降级)
+	if m.Tier == "cold" {
+		fields["tier"] = "hot" // 冷记忆被检索命中 → 回到热层(阶段 D P1 唤起)
+	}
+	if err := e.svc.repos.Memory.UpdateFields(id, ownerID, fields); err != nil {
 		log.Printf("[WARN][extractor] UpdateFields 失败 (id=%s): %v", id, err)
 	}
 }

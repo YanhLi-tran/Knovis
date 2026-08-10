@@ -59,6 +59,11 @@ type Memory struct {
 	SourceSessionID  string         `gorm:"type:varchar(36);comment:来源Session（自动提取时记录）" json:"source_session_id"`
 	SourceRound      int            `gorm:"comment:来源轮次" json:"source_round"`
 	Importance       int            `gorm:"default:50;comment:重要度0-100（影响检索排序）" json:"importance"`
+	EffectiveImportance int         `gorm:"default:0;comment:衰减后的有效重要度(初始=importance,随时间衰减)" json:"effective_importance"`
+	Tier             string         `gorm:"type:varchar(8);default:hot;comment:冷热分层(hot=在Chroma cold=仅MySQL)" json:"tier"`
+	MergedFrom       string         `gorm:"type:json;comment:合并来源(被合并的原记忆ID数组)" json:"merged_from"`
+	MergedAt         *time.Time     `gorm:"comment:合并时间(被合并的原记忆标记)" json:"merged_at"`
+	LastDecayedAt    *time.Time     `gorm:"comment:上次衰减计算时间" json:"last_decayed_at"`
 	EmbeddingStatus  string         `gorm:"type:varchar(16);default:pending;index;comment:向量状态(pending/done/failed)" json:"embedding_status"`
 	LastAccessedAt   time.Time      `gorm:"comment:最后访问时间（LRU用）" json:"last_accessed_at"`
 	CreatedAt        time.Time      `gorm:"comment:创建时间" json:"created_at"`

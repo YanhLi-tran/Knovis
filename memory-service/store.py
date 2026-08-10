@@ -1,6 +1,7 @@
 """存储与检索封装：Chroma 向量库 + MySQL BM25 + 混合融合."""
 import os
 import logging
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional
 
 import chromadb
@@ -78,6 +79,7 @@ def upsert_embeddings(
     # Chroma upsert 幂等（按 id 覆盖）
     col.upsert(ids=ids, embeddings=vectors, documents=contents, metadatas=metadatas)
     _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引(下次查询惰性重建)
+    _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
     return len(ids)
 
 
@@ -89,6 +91,7 @@ def delete_embeddings(project_id: str, ids: List[str]) -> int:
         col = get_or_create_collection(project_id)
         col.delete(ids=ids)
         _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引
+        _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
         return len(ids)
     except Exception as e:
         logger.warning("从 Chroma 删除向量失败 project=%s: %s", project_id, e)
@@ -104,6 +107,8 @@ def delete_collection(project_id: str) -> None:
         logger.info("已删除 collection: %s", name)
     except Exception as e:
         logger.warning("删除 collection %s 失败: %s", name, e)
+    _invalidate_bm25_index()      # 数据变更,失效 BM25 内存索引
+    _invalidate_search_cache(project_id)  # 阶段 C P1: 失效该项目检索结果缓存
 
 
 # ==================== MySQL BM25 ====================
@@ -162,7 +167,8 @@ class _BM25Index:
         import time
         t0 = time.time()
         sql = (
-            "SELECT id, project_id, content, memory_type, source, importance "
+            "SELECT id, project_id, content, memory_type, source, importance, "
+            "last_accessed_at, effective_importance, tier "
             "FROM agent_memories "
             "WHERE deleted_at IS NULL AND embedding_status='done' "
             "AND memory_type != 'keyword' "
@@ -212,6 +218,9 @@ class _BM25Index:
                 "id": m["id"], "content": m["content"],
                 "memory_type": m["memory_type"], "source": m["source"],
                 "importance": int(m.get("importance", 50)),
+                "effective_importance": int(m.get("effective_importance", m.get("importance", 50))),
+                "tier": m.get("tier", "hot"),
+                "last_accessed_at": m.get("last_accessed_at"),
                 "score": score, "sources": ["bm25"],
             })
             if len(out) >= top_n:
@@ -234,6 +243,15 @@ def _invalidate_bm25_index():
     """失效全局 BM25 索引(upsert/delete 后置空,下次查询重建)."""
     global _bm25_index
     _bm25_index = None
+
+
+def _invalidate_search_cache(project_id: str):
+    """失效某项目的检索结果缓存(阶段 C P1, upsert/delete/delete_collection 时调用)."""
+    try:
+        from cache import invalidate_project_cache
+        invalidate_project_cache(project_id)
+    except Exception:
+        pass  # 缓存不可用时静默降级
 
 
 def bm25_search(project_id: str, query: str, top_n: int = 10) -> List[Dict[str, Any]]:
@@ -301,6 +319,43 @@ def _normalize_scores(items: List[Dict[str, Any]], score_key: str = "score") -> 
         s = float(it.get(score_key, 0))
         it["norm_score"] = (s - lo) / rng if rng > 0 else 1.0
     return items
+
+
+# ==================== 记忆衰减(阶段 D P0) ====================
+
+def _apply_decay(memories: List[Dict[str, Any]], now=None) -> List[Dict[str, Any]]:
+    """对检索结果应用衰减计算,更新 effective_importance(仅内存计算,不写库).
+
+    衰减规则(对齐方案 §3.1):
+      - 30 天内不衰减
+      - source=manual 豁免(手动记忆)
+      - 超过 30 天后每周 -3
+      - 下限 10(保留兜底召回可能)
+
+    返回结果中 effective_importance < importance 的记忆,score × 0.9 微调排序。
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    for m in memories:
+        if m.get("source") == "manual":
+            continue  # 手动记忆豁免
+        last_access = m.get("last_accessed_at")
+        if not last_access:
+            continue
+        try:
+            days = (now - last_access).days
+        except Exception:
+            continue
+        if days <= 30:
+            continue
+        decay = (days - 30) // 7 * 3
+        eff = m.get("effective_importance", m.get("importance", 50))
+        new_eff = max(10, eff - decay)
+        if new_eff < eff:
+            m["effective_importance"] = new_eff
+            # 衰减严重的记忆微调降权(方案 §3.3)
+            m["score"] = m.get("score", 0) * 0.9
+    return memories
 
 
 def hybrid_fuse(
@@ -389,6 +444,15 @@ def hybrid_fuse(
         for r in kw:
             r["score"] *= 0.6
 
+    # 记忆衰减(阶段 D P0):懒计算 effective_importance,衰减严重的降权
+    results = _apply_decay(results)
+
     # 排序取 top-k
     results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:top_k]
+    top = results[:top_k]
+    # 标记降权是否触发(监控用): 有 keyword 且非 keyword 最高分 > 0.82 → 触发 ×0.1
+    for r in top:
+        r["deweight_triggered"] = bool(
+            kw and max_non_kw_rag > 0.82 and r.get("memory_type") == "keyword"
+        )
+    return top
