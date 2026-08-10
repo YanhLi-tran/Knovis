@@ -65,6 +65,28 @@ for _handler in logging.getLogger().handlers:
 app = FastAPI(title="Agent Doc Service", version="1.0.0")
 app.add_middleware(TraceContextMiddleware)
 
+
+# ==================== 启动预热 ====================
+# BM25 内存索引首次构建 ~10s(含 jieba 字典加载 + 全量 chunks 分词),
+# 向量缓存加载 ~1-2s。冷启动预热避免第一个检索请求撞上 10s 卡顿。
+# 预热失败不阻塞启动(数据为空或 MySQL 暂不可用时降级,首次检索时惰性构建)。
+
+
+@app.on_event("startup")
+def _warmup():
+    import time as _time
+
+    t0 = _time.time()
+    try:
+        from store import _get_bm25_index, _load_vec_cache
+
+        _get_bm25_index()   # 构建 BM25 内存索引(jieba + rank_bm25)
+        _load_vec_cache()   # 加载向量缓存到内存
+        logger.info("[warmup] 预热完成(BM25 索引 + 向量缓存), 耗时 %.1fs", _time.time() - t0)
+    except Exception as e:
+        logger.warning("[warmup] 预热失败(首次检索时惰性构建): %s", e)
+
+
 CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "256"))
 CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "26"))
 BM25_WEIGHT = float(os.getenv("RAG_BM25_WEIGHT", "0.3"))
