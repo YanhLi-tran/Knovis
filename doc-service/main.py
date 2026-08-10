@@ -65,8 +65,8 @@ for _handler in logging.getLogger().handlers:
 app = FastAPI(title="Agent Doc Service", version="1.0.0")
 app.add_middleware(TraceContextMiddleware)
 
-CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "800"))
-CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "64"))
+CHUNK_SIZE = int(os.getenv("RAG_CHUNK_SIZE", "256"))
+CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "26"))
 BM25_WEIGHT = float(os.getenv("RAG_BM25_WEIGHT", "0.3"))
 RAG_WEIGHT = float(os.getenv("RAG_RAG_WEIGHT", "0.7"))
 RECALL_TOP_N = int(os.getenv("RAG_RECALL_TOP_N", "20"))

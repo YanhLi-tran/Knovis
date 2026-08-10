@@ -18,5 +18,12 @@ chromadb>=0.4.24
 # MySQL(BM25 FULLTEXT 检索 + chunks 读写)
 pymysql>=1.1.0
 
+# MySQL 连接池(替代每次新建连接,省 TCP 握手开销)
+dbutils>=3.1.0
+
+# BM25 内存索引(jieba 中文分词 + rank_bm25 真 BM25,替代 MySQL FULLTEXT)
+jieba>=0.42.1
+rank_bm25>=0.2.2
+
 # Rerank(bge-reranker-v2-m3,RERANK_ENABLED=true 时加载)
 sentence-transformers>=2.7.0

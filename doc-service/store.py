@@ -13,11 +13,18 @@ from typing import List, Dict, Any, Optional, Tuple
 import chromadb
 import numpy as np
 import pymysql
+from dbutils.pooled_db import PooledDB
 from dotenv import load_dotenv
+import jieba
+from rank_bm25 import BM25Okapi
 
 load_dotenv()
 
 logger = logging.getLogger("doc-service.store")
+
+# BM25 内存索引参数(可选,有默认值;对齐最优方案 k1=1.5 / b=0.75)
+_BM25_K1 = float(os.getenv("BM25_K1", "1.5"))
+_BM25_B = float(os.getenv("BM25_B", "0.75"))
 
 # Chroma 持久化目录(doc-service 独立,与 memory-service 隔离)
 _CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
@@ -94,18 +101,34 @@ def _load_vec_cache():
 
 
 def _invalidate_vec_cache():
-    """失效向量缓存(upsert/delete 后调用,下次查询时重新加载)."""
+    """失效向量缓存(upsert/delete 后调用,下次查询时重新加载).
+
+    级联失效 BM25 内存索引:向量缓存失效意味着数据有变更,BM25 索引也必须重建,
+    否则检索到的是旧数据。首次查询时惰性重建(全量 chunks 构建 ~9s,仅一次性开销)。
+    """
     global _vec_cache_ids, _vec_cache_matrix, _vec_cache_doc_ids
     _vec_cache_ids = None
     _vec_cache_matrix = None
     _vec_cache_doc_ids = None
+    _invalidate_bm25_index()
 
 
-# ==================== MySQL ====================
+# ==================== MySQL(连接池,替代每次新建连接) ====================
 
-def _mysql_conn():
-    """建立 MySQL 连接(每次检索新建)."""
-    return pymysql.connect(
+_mysql_pool: Optional[PooledDB] = None
+
+
+def _get_mysql_pool() -> PooledDB:
+    """获取 MySQL 连接池单例(dbutils PooledDB,省 TCP 握手开销)."""
+    global _mysql_pool
+    if _mysql_pool is not None:
+        return _mysql_pool
+    _mysql_pool = PooledDB(
+        creator=pymysql,
+        mincached=2,
+        maxcached=10,
+        maxconnections=20,
+        blocking=True,
         host=os.getenv("DB_HOST", "127.0.0.1"),
         port=int(os.getenv("DB_PORT", "3306")),
         user=os.getenv("DB_USER", "root"),
@@ -116,6 +139,13 @@ def _mysql_conn():
         connect_timeout=5,
         read_timeout=15,
     )
+    logger.info("MySQL 连接池已初始化(mincached=2, maxcached=10, maxconnections=20)")
+    return _mysql_pool
+
+
+def _mysql_conn():
+    """从连接池获取连接(用完需 close,实际是归还池)."""
+    return _get_mysql_pool().connection()
 
 
 def _parse_heading_path(raw: Any) -> List[str]:
@@ -365,46 +395,145 @@ def delete_doc_vectors(doc_id: int) -> int:
         return 0
 
 
-# ==================== 检索:BM25 + RAG + 融合 + 段落召回 ====================
+# ==================== 检索:BM25(内存索引) + RAG + 融合 + 段落召回 ====================
+
+def _jieba_tokenize(text: str) -> List[str]:
+    """jieba 精确模式分词 + 过滤空白和单字符标点.
+
+    MySQL FULLTEXT 对中文分词基本失效(整段当一个词),弃用 MATCH...AGAINST,
+    改用 jieba 分词 + rank_bm25 真 BM25(词频饱和 + 文档长度归一化)。
+    """
+    if not text:
+        return []
+    tokens = []
+    for tok in jieba.lcut(text, cut_all=False):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        if len(tok) == 1 and not tok.isalnum():
+            continue
+        tokens.append(tok)
+    return tokens
+
+
+class _BM25Index:
+    """内存 BM25 索引(单例,惰性构建).
+
+    从 MySQL 加载全量 embedding_status='done' 的 chunks,jieba 分词后构建 BM25Okapi。
+    数据变更(upsert/delete)后由 _invalidate_bm25_index 置空,下次查询重建。
+    """
+
+    def __init__(self):
+        self._chunks: List[Dict[str, Any]] = []
+        self._tokenized: List[List[str]] = []
+        self._bm25: Optional[BM25Okapi] = None
+        self._build()
+
+    def _build(self):
+        sql = (
+            "SELECT c.id AS chunk_id, c.document_id, c.chunk_index, c.page_num, "
+            "c.heading_path, c.section_id, c.content, c.chunk_type, "
+            "d.filename AS doc_name "
+            "FROM agent_document_chunks c "
+            "JOIN agent_documents d ON c.document_id = d.id "
+            "WHERE d.deleted_at IS NULL AND c.embedding_status = 'done' "
+            "ORDER BY c.id ASC"
+        )
+        conn = _mysql_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql)
+                rows = cur.fetchall()
+        finally:
+            conn.close()
+        if not rows:
+            return
+        t0 = time.time()
+        for r in rows:
+            r["heading_path"] = _parse_heading_path(r.get("heading_path"))
+            r["sources"] = ["bm25"]
+            self._chunks.append(r)
+            self._tokenized.append(_jieba_tokenize(r.get("content", "")))
+        self._bm25 = BM25Okapi(self._tokenized, k1=_BM25_K1, b=_BM25_B)
+        logger.info("BM25 内存索引构建完成: %d chunks, 耗时 %.2fs", len(self._chunks), time.time() - t0)
+
+    def search(self, query: str, top_n: int = 20, doc_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
+        if not self._bm25 or not self._chunks:
+            return []
+        query_tokens = _jieba_tokenize(query)
+        if not query_tokens:
+            return []
+        scores = self._bm25.get_scores(query_tokens)
+        doc_id_set = set(int(d) for d in doc_ids) if doc_ids else None
+        n = min(top_n, len(scores))
+        if n <= 0:
+            return []
+        if doc_id_set is not None:
+            mask = np.array(
+                [int(c["document_id"]) in doc_id_set for c in self._chunks], dtype=bool
+            )
+            scores = np.where(mask, scores, -np.inf)
+        if n < len(scores):
+            top_idx = np.argpartition(scores, -n)[-n:]
+        else:
+            top_idx = np.arange(len(scores))
+        top_idx = top_idx[np.argsort(scores[top_idx])[::-1]]
+        out: List[Dict[str, Any]] = []
+        for idx in top_idx:
+            score = float(scores[idx])
+            if score <= 0:
+                continue
+            c = self._chunks[idx]
+            out.append(
+                {
+                    "chunk_id": c["chunk_id"],
+                    "document_id": c["document_id"],
+                    "chunk_index": c["chunk_index"],
+                    "page_num": c["page_num"],
+                    "heading_path": list(c["heading_path"]),
+                    "section_id": c["section_id"],
+                    "content": c["content"],
+                    "chunk_type": c["chunk_type"],
+                    "doc_name": c["doc_name"],
+                    "score": score,
+                    "sources": ["bm25"],
+                }
+            )
+            if len(out) >= top_n:
+                break
+        return out
+
+
+_bm25_index: Optional[_BM25Index] = None
+
+
+def _get_bm25_index() -> _BM25Index:
+    """获取内存 BM25 索引(惰性单例)."""
+    global _bm25_index
+    if _bm25_index is None:
+        _bm25_index = _BM25Index()
+    return _bm25_index
+
+
+def _invalidate_bm25_index():
+    """失效 BM25 内存索引(数据变更后置空,下次查询重建)."""
+    global _bm25_index
+    _bm25_index = None
+
 
 def bm25_search(query: str, top_n: int = 20, doc_ids: Optional[List[int]] = None) -> List[Dict[str, Any]]:
-    """MySQL FULLTEXT 检索 chunks(BM25).
+    """内存 BM25 检索(替代 MySQL FULLTEXT,真 BM25 + 中文分词).
 
     返回字段:chunk_id, document_id, chunk_index, page_num, heading_path, section_id,
              content, chunk_type, doc_name, score
     """
     if not query.strip():
         return []
-    sql = (
-        "SELECT c.id AS chunk_id, c.document_id, c.chunk_index, c.page_num, c.heading_path, "
-        "c.section_id, c.content, c.chunk_type, d.filename AS doc_name, "
-        "MATCH(c.content) AGAINST(%s IN NATURAL LANGUAGE MODE) AS score "
-        "FROM agent_document_chunks c "
-        "JOIN agent_documents d ON c.document_id = d.id "
-        "WHERE d.deleted_at IS NULL AND c.embedding_status = 'done'"
-    )
-    args: List[Any] = [query]
-    if doc_ids:
-        placeholders = ",".join(["%s"] * len(doc_ids))
-        sql += f" AND c.document_id IN ({placeholders})"
-        args.extend(doc_ids)
-    sql += " ORDER BY score DESC, c.chunk_index ASC LIMIT %s"
-    args.append(top_n)
     try:
-        conn = _mysql_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute(sql, args)
-                rows = cur.fetchall()
-        finally:
-            conn.close()
+        return _get_bm25_index().search(query, top_n=top_n, doc_ids=doc_ids)
     except Exception as e:
         logger.error("BM25 检索失败: %s", e)
         return []
-    for r in rows:
-        r["heading_path"] = _parse_heading_path(r.get("heading_path"))
-        r["sources"] = ["bm25"]
-    return rows
 
 
 def rag_search(
