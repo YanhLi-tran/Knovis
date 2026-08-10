@@ -103,6 +103,12 @@ if [ -f "$PROJECT_DIR/sql/docker-init.sql" ]; then
     fi
 fi
 
+# 增量迁移（幂等，每次启动都执行）: 旧库补齐新增表/字段（memory_search_metrics + agent_memories 新字段）
+if [ -f "$PROJECT_DIR/deploy/paratera/migrate-upgrade.sql" ]; then
+    info "执行增量数据库迁移 migrate-upgrade.sql（幂等，可重复执行）..."
+    mysql -u"$DB_USER" -p"$DB_PASSWORD" -h"$DB_HOST" < "$PROJECT_DIR/deploy/paratera/migrate-upgrade.sql"
+fi
+
 # ===== 4. 停止旧的 tmux session =====
 if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
     warn "检测到已有 knovis tmux session，正在停止..."
