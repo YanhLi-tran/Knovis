@@ -377,7 +377,10 @@ def hybrid_fuse(
     # keyword 自适应降权(不排除:保留信号同时降低干扰)
     non_kw = [r for r in results if r.get("memory_type") != "keyword"]
     kw = [r for r in results if r.get("memory_type") == "keyword"]
-    if non_kw and non_kw[0].get("rag_raw_score", 0) > 0.82:
+    # 取非 keyword 结果中最大的 rag_raw_score 作为判断依据
+    # (results 此时未排序,不能取 non_kw[0],否则是任意首元素而非最高分)
+    max_non_kw_rag = max((r.get("rag_raw_score", 0) for r in non_kw), default=0)
+    if max_non_kw_rag > 0.82:
         # 有高质量语义命中 → keyword 降到很低(接近排除)
         for r in kw:
             r["score"] *= 0.1

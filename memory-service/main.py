@@ -326,6 +326,15 @@ def on_startup():
     else:
         logger.info("跳过模型预加载（PRELOAD_MODEL=false），首次请求时会加载")
 
+    # 预热 BM25 内存索引(首次查询会构建,jieba 分词 + BM25Okapi 初始化 ~0.5s)
+    # 提前触发惰性构建,避免首个检索请求撞上构建延迟
+    try:
+        from store import _get_bm25_index
+        _get_bm25_index()
+        logger.info("BM25 索引预热完成")
+    except Exception as e:
+        logger.warning("BM25 索引预热失败(将在首次查询时构建): %s", e)
+
 
 if __name__ == "__main__":
     port = int(os.getenv("MEMORY_SERVICE_PORT", "8002"))
