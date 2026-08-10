@@ -172,17 +172,23 @@ func (e *Extractor) doLLMExtract(ctx context.Context, projectID, ownerID, sessio
 	log.Printf("[extractor] LLM 深度提取完成（项目 %s，提取 %d 条记忆）", projectID, len(items))
 }
 
-// dedupAndCreate 去重拦截：查同项目相似记忆（cosine>0.92）
+// dedupAndCreate 去重拦截：查同项目相似记忆（RAG raw cosine>0.92）
 // 命中：更新 importance + last_accessed_at（不新增）
 // 未命中：新建 agent_memories 记录（embedding_status=pending）
 func (e *Extractor) dedupAndCreate(ctx context.Context, projectID, ownerID, sessionID string, round int, content, memType string, importance int) {
 	// 去重：调 Python /search 查相似
+	// 用 RAGRawScore(绝对 cosine)判重,不用融合分 score:
+	// 融合分受 min-max 归一化 + keyword 降权影响,不是绝对相似度,误判会导致重复写入
 	results, err := e.svc.client.Search(ctx, projectID, content, 3)
 	if err != nil {
 		log.Printf("[WARN][extractor] 去重检索失败，降级直接新建 (project=%s): %v", projectID, err)
 	} else {
 		for _, r := range results {
-			if r.Score >= dedupThreshold {
+			raw := r.RAGRawScore
+			if raw == 0 { // 兼容旧响应缺字段:回退融合分
+				raw = r.Score
+			}
+			if raw >= dedupThreshold {
 				// 命中：更新 importance（+5，上限100）+ last_accessed_at
 			e.bumpExistingMemory(r.ID, ownerID)
 			return

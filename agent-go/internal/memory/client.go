@@ -77,6 +77,7 @@ type SearchResult struct {
 	Importance  int      `json:"importance"`
 	Score       float64  `json:"score"`
 	Sources     []string `json:"sources"`
+	RAGRawScore float64  `json:"rag_raw_score"` // RAG 路绝对 cosine(去重判重用)
 }
 
 type searchRequest struct {
