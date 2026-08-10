@@ -97,6 +97,7 @@ class SearchResult(BaseModel):
     importance: int
     score: float
     sources: List[str]
+    rag_raw_score: float = Field(default=0.0, description="RAG 路绝对 cosine(去重判重用)")
 
 
 class SearchResponse(BaseModel):
@@ -181,6 +182,9 @@ def search(req: SearchRequest):
     from embedder import embed as do_embed
     from store import bm25_search, rag_search, hybrid_fuse
 
+    import time as _t
+    _t0 = _t.perf_counter()
+
     bm25_w = float(os.getenv("BM25_WEIGHT", "0.3"))
     rag_w = float(os.getenv("RAG_WEIGHT", "0.7"))
     recall_n = int(os.getenv("RECALL_TOP_N", "10"))
@@ -188,23 +192,38 @@ def search(req: SearchRequest):
 
     # 1) RAG：query → vector，再查 Chroma
     rag_results: List[Dict[str, Any]] = []
+    _t1 = _t.perf_counter()
     try:
         qvecs = do_embed([req.query])
         if qvecs:
             rag_results = rag_search(req.project_id, qvecs[0], top_n=recall_n)
     except Exception as e:
         logger.warning("RAG 检索异常（降级仅用 BM25）: %s", e)
+    _t2 = _t.perf_counter()
+    _t_embed_rag = (_t2 - _t1) * 1000
 
     # 2) BM25：MySQL FULLTEXT
     bm25_results: List[Dict[str, Any]] = []
+    _t3 = _t.perf_counter()
     try:
         bm25_results = bm25_search(req.project_id, req.query, top_n=recall_n)
     except Exception as e:
         logger.warning("BM25 检索异常（降级仅用 RAG）: %s", e)
+    _t4 = _t.perf_counter()
+    _t_bm25 = (_t4 - _t3) * 1000
 
     # 3) 融合
+    _t5 = _t.perf_counter()
     fused = hybrid_fuse(bm25_results, rag_results, bm25_w, rag_w, top_k)
     results = [SearchResult(**it) for it in fused]
+    _t6 = _t.perf_counter()
+    _t_fuse = (_t6 - _t5) * 1000
+    _t_total = (_t6 - _t0) * 1000
+    logger.info(
+        "[search] project=%s q=%.20s embed+rag=%.1fms bm25=%.1fms fuse=%.1fms total=%.1fms results=%d bm25_n=%d rag_n=%d",
+        req.project_id, req.query, _t_embed_rag, _t_bm25, _t_fuse, _t_total,
+        len(results), len(bm25_results), len(rag_results),
+    )
     return SearchResponse(
         results=results,
         bm25_count=len(bm25_results),
@@ -287,13 +306,21 @@ def embed_vectors(req: EmbedVectorsRequest):
 
 @app.on_event("startup")
 def on_startup():
-    """启动时预加载模型（可选，避免首次请求慢）。"""
+    """启动时预加载模型 + warmup（避免首次请求慢）.
+
+    get_model() 只加载权重,首次 forward 才触发 CUDA context 初始化(~100ms)
+    + cuDNN autotuning(~150ms) + 显存池分配(~50ms),共 ~400ms 冷启动。
+    这里主动 embed 一次"warmup",把开销挪到启动阶段。
+    """
     if os.getenv("PRELOAD_MODEL", "true").lower() in ("true", "1", "yes"):
-        logger.info("启动预加载 embedding 模型...")
+        logger.info("启动预加载 embedding 模型 + warmup...")
         try:
-            from embedder import get_model
+            import time as _t
+            from embedder import get_model, embed as _do_embed
             get_model()
-            logger.info("模型预加载完成")
+            _t0 = _t.time()
+            _do_embed(["warmup"])
+            logger.info("模型预加载 + warmup 完成(耗时 %.1fs)", _t.time() - _t0)
         except Exception as e:
             logger.error("模型预加载失败（将在首次请求时重试）: %s", e)
     else:

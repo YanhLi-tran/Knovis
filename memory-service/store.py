@@ -5,11 +5,18 @@ from typing import List, Dict, Any, Optional
 
 import chromadb
 import pymysql
+import numpy as np
 from dotenv import load_dotenv
+import jieba
+from rank_bm25 import BM25Okapi
 
 load_dotenv()
 
 logger = logging.getLogger("memory-service.store")
+
+# BM25 内存索引参数(可选,有默认值)
+_BM25_K1 = float(os.getenv("BM25_K1", "1.5"))
+_BM25_B = float(os.getenv("BM25_B", "0.75"))
 
 # Chroma 持久化目录
 _CHROMA_DIR = os.getenv("CHROMA_PERSIST_DIR", "./data/chroma")
@@ -70,6 +77,7 @@ def upsert_embeddings(
 
     # Chroma upsert 幂等（按 id 覆盖）
     col.upsert(ids=ids, embeddings=vectors, documents=contents, metadatas=metadatas)
+    _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引(下次查询惰性重建)
     return len(ids)
 
 
@@ -80,6 +88,7 @@ def delete_embeddings(project_id: str, ids: List[str]) -> int:
     try:
         col = get_or_create_collection(project_id)
         col.delete(ids=ids)
+        _invalidate_bm25_index()  # 数据变更,失效 BM25 内存索引
         return len(ids)
     except Exception as e:
         logger.warning("从 Chroma 删除向量失败 project=%s: %s", project_id, e)
@@ -114,31 +123,129 @@ def _mysql_conn():
     )
 
 
-def bm25_search(project_id: str, query: str, top_n: int = 10) -> List[Dict[str, Any]]:
-    """MySQL FULLTEXT 检索（ngram 解析器支持中文）。
+# ==================== 内存 BM25 索引(jieba + rank_bm25,替代 MySQL FULLTEXT) ====================
 
-    返回字段：id, content, memory_type, source, importance, score
-    score 为 MySQL FULLTEXT 相关度（非归一化）
+def _jieba_tokenize(text: str) -> List[str]:
+    """jieba 精确模式分词 + 过滤单字符标点.
+
+    MySQL FULLTEXT(ngram)对中文分词失效(实测中文查询返回 0 条),
+    改用 jieba 分词 + rank_bm25 真 BM25。
     """
-    if not query.strip():
+    if not text:
         return []
-    sql = (
-        "SELECT id, content, memory_type, source, importance, "
-        "MATCH(content) AGAINST(%s IN NATURAL LANGUAGE MODE) AS score "
-        "FROM agent_memories "
-        "WHERE project_id = %s AND deleted_at IS NULL AND embedding_status = 'done' "
-        "ORDER BY score DESC, importance DESC, last_accessed_at DESC "
-        "LIMIT %s"
-    )
-    try:
+    tokens = []
+    for tok in jieba.lcut(text, cut_all=False):
+        tok = tok.strip().lower()
+        if not tok:
+            continue
+        if len(tok) == 1 and not tok.isalnum():
+            continue
+        tokens.append(tok)
+    return tokens
+
+
+class _BM25Index:
+    """全局内存 BM25 索引(单例,惰性构建).
+
+    记忆总量小(数百条),无需按 project 分桶,全局一个索引即可。
+    加载时排除 keyword 类型(避免标签干扰语义召回)。
+    数据变更(upsert/delete)后由 _invalidate_bm25_index 置空,下次查询重建。
+    """
+
+    def __init__(self):
+        self._memories: List[Dict[str, Any]] = []
+        self._tokenized: List[List[str]] = []
+        self._bm25: Optional[BM25Okapi] = None
+        self._build()
+
+    def _build(self):
+        import time
+        t0 = time.time()
+        sql = (
+            "SELECT id, project_id, content, memory_type, source, importance "
+            "FROM agent_memories "
+            "WHERE deleted_at IS NULL AND embedding_status='done' "
+            "AND memory_type != 'keyword' "
+            "ORDER BY created_at ASC"
+        )
         conn = _mysql_conn()
         try:
             with conn.cursor() as cur:
-                cur.execute(sql, (query, project_id, top_n))
+                cur.execute(sql)
                 rows = cur.fetchall()
-            return rows
         finally:
             conn.close()
+        if not rows:
+            return
+        for r in rows:
+            self._memories.append(r)
+            self._tokenized.append(_jieba_tokenize(r.get("content", "")))
+        self._bm25 = BM25Okapi(self._tokenized, k1=_BM25_K1, b=_BM25_B)
+        logger.info("BM25 内存索引构建完成: %d 条记忆(已排除 keyword), 耗时 %.2fs",
+                    len(self._memories), time.time() - t0)
+
+    def search(self, project_id: str, query: str, top_n: int = 20) -> List[Dict[str, Any]]:
+        if not self._bm25 or not self._memories:
+            return []
+        query_tokens = _jieba_tokenize(query)
+        if not query_tokens:
+            return []
+        scores = self._bm25.get_scores(query_tokens)
+        # 项目隔离:非本项目置 -inf
+        mask = np.array([m["project_id"] == project_id for m in self._memories], dtype=bool)
+        scores = np.where(mask, scores, -np.inf)
+        n = min(top_n, len(scores))
+        if n <= 0:
+            return []
+        if n < len(scores):
+            top_idx = np.argpartition(scores, -n)[-n:]
+        else:
+            top_idx = np.arange(len(scores))
+        top_idx = top_idx[np.argsort(scores[top_idx])[::-1]]
+        out: List[Dict[str, Any]] = []
+        for idx in top_idx:
+            score = float(scores[idx])
+            if score <= 0:
+                continue
+            m = self._memories[idx]
+            out.append({
+                "id": m["id"], "content": m["content"],
+                "memory_type": m["memory_type"], "source": m["source"],
+                "importance": int(m.get("importance", 50)),
+                "score": score, "sources": ["bm25"],
+            })
+            if len(out) >= top_n:
+                break
+        return out
+
+
+_bm25_index: Optional[_BM25Index] = None
+
+
+def _get_bm25_index() -> _BM25Index:
+    """获取全局 BM25 索引(惰性单例)."""
+    global _bm25_index
+    if _bm25_index is None:
+        _bm25_index = _BM25Index()
+    return _bm25_index
+
+
+def _invalidate_bm25_index():
+    """失效全局 BM25 索引(upsert/delete 后置空,下次查询重建)."""
+    global _bm25_index
+    _bm25_index = None
+
+
+def bm25_search(project_id: str, query: str, top_n: int = 10) -> List[Dict[str, Any]]:
+    """内存 BM25 检索(替代 MySQL FULLTEXT,真 BM25 + 中文分词).
+
+    返回字段：id, content, memory_type, source, importance, score
+    score 为 BM25Okapi 原始分(非归一化)
+    """
+    if not query.strip():
+        return []
+    try:
+        return _get_bm25_index().search(project_id, query, top_n=top_n)
     except Exception as e:
         logger.error("BM25 检索失败 project=%s: %s", project_id, e)
         return []
@@ -209,9 +316,20 @@ def hybrid_fuse(
     - id, content, memory_type, source, importance
     - score: 加权融合分数 ∈ [0, 1]
     - sources: 命中路数 ["bm25", "rag"]（用于调试/可观测）
+    - rag_raw_score: RAG 路绝对 cosine(去重判重用,不受归一化/降权影响)
+
+    keyword 自适应降权：
+    - 有高质量语义命中(top1 rag_raw_score > 0.82)时 keyword × 0.1(接近排除)
+    - 无语义命中时 keyword × 0.6(保留兜底信号)
+    注:score 卡 0.70 是 BM25 返回 0 条的必然结果(0.3×0+0.7×1.0),修好 BM25 自动恢复。
     """
     bm25_results = _normalize_scores(bm25_results)
     rag_results = _normalize_scores(rag_results)
+
+    # rag_raw_score:保留 RAG 路绝对相似度(去重判重用)
+    rag_raw_map: Dict[str, float] = {}
+    for it in rag_results:
+        rag_raw_map[it["id"]] = float(it.get("score", 0.0))
 
     merged: Dict[str, Dict[str, Any]] = {}
 
@@ -224,12 +342,14 @@ def hybrid_fuse(
             "importance": int(it.get("importance", 50)),
             "bm25_score": it.get("norm_score", 0.0),
             "rag_score": 0.0,
+            "rag_raw_score": rag_raw_map.get(it["id"], 0.0),
             "sources": ["bm25"],
         }
 
     for it in rag_results:
         if it["id"] in merged:
             merged[it["id"]]["rag_score"] = it.get("norm_score", 0.0)
+            merged[it["id"]]["rag_raw_score"] = float(it.get("score", 0.0))
             merged[it["id"]]["sources"].append("rag")
             # 取较丰富的 content（RAG 文档来自 Chroma，应已存）
             if not merged[it["id"]]["content"]:
@@ -243,6 +363,7 @@ def hybrid_fuse(
                 "importance": int(it.get("importance", 50)),
                 "bm25_score": 0.0,
                 "rag_score": it.get("norm_score", 0.0),
+                "rag_raw_score": float(it.get("score", 0.0)),
                 "sources": ["rag"],
             }
 
@@ -252,6 +373,18 @@ def hybrid_fuse(
         final = bm25_weight * it["bm25_score"] + rag_weight * it["rag_score"]
         it["score"] = final
         results.append(it)
+
+    # keyword 自适应降权(不排除:保留信号同时降低干扰)
+    non_kw = [r for r in results if r.get("memory_type") != "keyword"]
+    kw = [r for r in results if r.get("memory_type") == "keyword"]
+    if non_kw and non_kw[0].get("rag_raw_score", 0) > 0.82:
+        # 有高质量语义命中 → keyword 降到很低(接近排除)
+        for r in kw:
+            r["score"] *= 0.1
+    elif kw:
+        # 无语义命中 → keyword 保留较高权重(兜底)
+        for r in kw:
+            r["score"] *= 0.6
 
     # 排序取 top-k
     results.sort(key=lambda x: x["score"], reverse=True)
