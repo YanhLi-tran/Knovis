@@ -41,9 +41,9 @@ func main() {
 	// 加载 .env（环境变量优先级：环境变量 > yaml > 默认值）
 	loadEnv(".env")
 
-	// 加载 go-zero 配置（etc/agent-api.yaml，支持 ${VAR:-default} 展开）
+	// 加载 go-zero 配置（etc/agent-api.yaml，conf.UseEnv 支持 ${VAR:-default} 展开为环境变量）
 	var c config.RestConfig
-	conf.MustLoad(*configFile, &c)
+	conf.MustLoad(*configFile, &c, conf.UseEnv())
 
 	// 初始化配置管理器（soul.yaml / agent_rule_basic.yaml 热加载）
 	configDir := filepath.Join(".", "configs")
