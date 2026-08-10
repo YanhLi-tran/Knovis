@@ -8,12 +8,13 @@
 Chroma 嵌入式单实例，数据存 ./data/chroma/，collection 命名 proj_{project_id}。
 """
 import os
+import json
 import logging
 import contextvars
 from typing import List, Dict, Any
 
 import uvicorn
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -104,6 +105,8 @@ class SearchResponse(BaseModel):
     results: List[SearchResult]
     bm25_count: int
     rag_count: int
+    cold_recall_count: int = Field(default=0, description="本次回填的冷记忆数(阶段D P1)")
+    cold_recall_ids: List[str] = Field(default=[], description="回填的记忆ID")
 
 
 class DeleteRequest(BaseModel):
@@ -177,7 +180,7 @@ def embed(req: EmbedRequest):
 
 
 @app.post("/search", response_model=SearchResponse)
-def search(req: SearchRequest):
+def search(req: SearchRequest, request: Request = None):
     """混合检索：BM25 + RAG，3:7 权重融合，top-k。"""
     from embedder import embed as do_embed
     from store import bm25_search, rag_search, hybrid_fuse
@@ -185,19 +188,66 @@ def search(req: SearchRequest):
     import time as _t
     _t0 = _t.perf_counter()
 
-    bm25_w = float(os.getenv("BM25_WEIGHT", "0.3"))
-    rag_w = float(os.getenv("RAG_WEIGHT", "0.7"))
-    recall_n = int(os.getenv("RECALL_TOP_N", "10"))
-    top_k = req.top_k if req.top_k > 0 else int(os.getenv("FINAL_TOP_K", "5"))
+    # A/B 实验参数覆盖(阶段 C P2): X-AB-Override header, 仅 AB_EXPERIMENT_MODE=true 时生效
+    ab_overrides: Dict[str, str] = {}
+    if request is not None and os.getenv("AB_EXPERIMENT_MODE", "false").lower() in ("true", "1", "yes"):
+        hdr = request.headers.get("X-AB-Override", "")
+        if hdr:
+            for pair in hdr.split(","):
+                if "=" in pair:
+                    k, v = pair.split("=", 1)
+                    ab_overrides[k.strip()] = v.strip()
 
-    # 1) RAG：query → vector，再查 Chroma
+    bm25_w = float(ab_overrides.get("BM25_WEIGHT", os.getenv("BM25_WEIGHT", "0.3")))
+    rag_w = float(ab_overrides.get("RAG_WEIGHT", os.getenv("RAG_WEIGHT", "0.7")))
+    recall_n = int(ab_overrides.get("RECALL_TOP_N", os.getenv("RECALL_TOP_N", "10")))
+    top_k = req.top_k if req.top_k > 0 else int(ab_overrides.get("FINAL_TOP_K", os.getenv("FINAL_TOP_K", "5")))
+
+    cache_hit = ""  # "" = 未命中 / l1_vector / l2_result
+
+    # 0) L2 结果缓存(阶段 C P1): 命中直接返回
+    try:
+        from cache import get_search_result, set_search_result
+        cached = get_search_result(req.project_id, req.query, top_k)
+        if cached:
+            try:
+                cached_obj = json.loads(cached)
+                cache_hit = "l2_result"
+                _record_metric(req, cached_obj, _t, _t0, "l2_result", None)
+                logger.info("[search] L2 缓存命中 project=%s q=%.20s total=%.1fms",
+                            req.project_id, req.query, (_t.perf_counter() - _t0) * 1000)
+                return SearchResponse(**cached_obj)
+            except Exception:
+                pass  # 反序列化失败, 走正常路径
+    except Exception:
+        pass  # 缓存不可用降级
+
+    # 1) RAG：query → vector(优先 L1 向量缓存, 阶段 C P1), 再查 Chroma
     rag_results: List[Dict[str, Any]] = []
+    rag_failed = False
     _t1 = _t.perf_counter()
     try:
-        qvecs = do_embed([req.query])
-        if qvecs:
-            rag_results = rag_search(req.project_id, qvecs[0], top_n=recall_n)
+        qvec = None
+        try:
+            from cache import get_query_vector
+            qvec = get_query_vector(req.query)
+            if qvec is not None:
+                cache_hit = "l1_vector"
+        except Exception:
+            pass
+        if qvec is None:
+            qvecs = do_embed([req.query])
+            qvec = qvecs[0] if qvecs else None
+            if qvec is not None:
+                try:
+                    from cache import set_query_vector
+                    set_query_vector(req.query, qvec)
+                except Exception:
+                    pass
+        if qvec is not None:
+            rag_results = rag_search(req.project_id, qvec, top_n=recall_n)
     except Exception as e:
+        rag_failed = True
         logger.warning("RAG 检索异常（降级仅用 BM25）: %s", e)
     _t2 = _t.perf_counter()
     _t_embed_rag = (_t2 - _t1) * 1000
@@ -212,6 +262,47 @@ def search(req: SearchRequest):
     _t4 = _t.perf_counter()
     _t_bm25 = (_t4 - _t3) * 1000
 
+    # 2.5) 冷记忆唤起(阶段 D P1): BM25 命中 cold 记忆 → 回填 Chroma + 改 tier
+    cold_recall_count = 0
+    cold_recall_ids: List[str] = []
+    try:
+        cold_hits = [r for r in bm25_results if r.get("tier") == "cold"]
+        if cold_hits:
+            max_recall = int(os.getenv("COLD_RECALL_MAX", "3"))
+            to_recall = cold_hits[:max_recall]
+            # 逐条: embed → upsert Chroma → UPDATE tier='hot'
+            from embedder import embed as _recall_embed
+            from store import upsert_embeddings
+            for m in to_recall:
+                vecs = _recall_embed([m["content"]])
+                if not vecs:
+                    continue
+                upsert_embeddings(req.project_id, [{
+                    "id": m["id"], "content": m["content"],
+                    "memory_type": m.get("memory_type", ""),
+                    "source": m.get("source", ""),
+                    "importance": m.get("importance", 50),
+                }], vecs)
+                # 改 tier(调用 MySQL 更新)
+                import pymysql as _pm
+                _conn = _pm.connect(host=os.getenv("DB_HOST", "127.0.0.1"),
+                                    port=int(os.getenv("DB_PORT", "3306")),
+                                    user=os.getenv("DB_USER", "root"),
+                                    password=os.getenv("DB_PASSWORD", ""),
+                                    database=os.getenv("DB_NAME", "agent_go"),
+                                    charset="utf8mb4")
+                try:
+                    with _conn.cursor() as _cur:
+                        _cur.execute("UPDATE agent_memories SET tier='hot', last_accessed_at=NOW() WHERE id=%s", (m["id"],))
+                    _conn.commit()
+                finally:
+                    _conn.close()
+                cold_recall_count += 1
+                cold_recall_ids.append(m["id"])
+                logger.info("[recall] 冷记忆回填 id=%s tier→hot", m["id"][:12])
+    except Exception as e:
+        logger.warning("冷记忆唤起失败(不影响主流程): %s", e)
+
     # 3) 融合
     _t5 = _t.perf_counter()
     fused = hybrid_fuse(bm25_results, rag_results, bm25_w, rag_w, top_k)
@@ -219,16 +310,55 @@ def search(req: SearchRequest):
     _t6 = _t.perf_counter()
     _t_fuse = (_t6 - _t5) * 1000
     _t_total = (_t6 - _t0) * 1000
+
+    # 监控: 记录检索指标(阶段 C P0)
+    kw_triggered = any(getattr(r, "deweight_triggered", False) for r in results)
+    _record_metric(req, None, _t, _t0, cache_hit, kw_triggered)
+
+    # 写 L2 结果缓存
+    try:
+        resp_obj = {
+            "results": [r.model_dump() for r in results],
+            "bm25_count": len(bm25_results),
+            "rag_count": len(rag_results),
+        }
+        set_search_result(req.project_id, req.query, top_k, json.dumps(resp_obj))
+    except Exception:
+        pass
+
     logger.info(
-        "[search] project=%s q=%.20s embed+rag=%.1fms bm25=%.1fms fuse=%.1fms total=%.1fms results=%d bm25_n=%d rag_n=%d",
+        "[search] project=%s q=%.20s embed+rag=%.1fms bm25=%.1fms fuse=%.1fms total=%.1fms results=%d bm25_n=%d rag_n=%d cache=%s",
         req.project_id, req.query, _t_embed_rag, _t_bm25, _t_fuse, _t_total,
-        len(results), len(bm25_results), len(rag_results),
+        len(results), len(bm25_results), len(rag_results), cache_hit,
     )
     return SearchResponse(
         results=results,
         bm25_count=len(bm25_results),
         rag_count=len(rag_results),
+        cold_recall_count=cold_recall_count,
+        cold_recall_ids=cold_recall_ids,
     )
+
+
+def _record_metric(req, cached_obj, _t, _t0, cache_hit, kw_triggered):
+    """记录检索指标(公共, 缓存命中/未命中都用)."""
+    try:
+        from metrics import record_search_metric
+        total = (_t.perf_counter() - _t0) * 1000
+        record_search_metric({
+            "project_id": req.project_id,
+            "total_ms": total,
+            "embed_rag_ms": 0,
+            "bm25_ms": 0,
+            "fuse_ms": 0,
+            "bm25_count": (cached_obj or {}).get("bm25_count", 0),
+            "rag_count": (cached_obj or {}).get("rag_count", 0),
+            "cache_hit": cache_hit,
+            "keyword_deweight_triggered": bool(kw_triggered),
+            "rag_failed": False,
+        })
+    except Exception:
+        pass
 
 
 @app.post("/delete")
@@ -268,6 +398,38 @@ def delete_collection(project_id: str):
     from store import delete_collection as _del
     _del(project_id)
     return {"deleted": True}
+
+
+# ==================== 阶段 C P0: 在线监控 ====================
+
+@app.get("/metrics")
+def metrics(project_id: str = "", range: int = 1):
+    """在线监控指标.
+
+    - realtime: 环形缓冲实时明细(P50/P95/P99 延迟, 召回路数, 缓存命中率, 降权触发率)
+    - aggregated: MySQL 分钟聚合(最近 range 小时)
+    - capacity: 容量(hot/cold/merged 记忆数 + BM25 索引规模)
+
+    query: project_id(可选, 过滤项目) / range(小时, 默认 1)
+    """
+    from metrics import get_realtime_metrics, get_aggregated_metrics, get_capacity_metrics
+    from store import _get_bm25_index
+
+    realtime = get_realtime_metrics(project_id)
+    agg = get_aggregated_metrics(project_id, range_hours=range)
+    cap = get_capacity_metrics()
+    # BM25 索引实际条数(store 侧注入)
+    try:
+        idx = _get_bm25_index()
+        cap["bm25_index_size"] = len(idx._memories) if idx and idx._memories else 0
+    except Exception:
+        pass
+    return {
+        "realtime": realtime,
+        "aggregated": agg,
+        "capacity": cap,
+    }
+
 
 
 # ==================== P5: RAG 文档系统支持(纯新增,不改已有逻辑) ====================
