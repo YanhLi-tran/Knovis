@@ -18,6 +18,7 @@ import (
 // 不可用时调用方需自行降级（retriever 回退 MySQL ListByProject）
 type MemoryClient struct {
 	baseURL string
+	apiKey  string // P0-1: 子服务鉴权 key(X-API-Key 头)
 	http    *http.Client
 }
 
@@ -29,6 +30,7 @@ func NewMemoryClient(cfg *config.AppConfig) *MemoryClient {
 	}
 	return &MemoryClient{
 		baseURL: base,
+		apiKey:  cfg.MemoryServiceAPIKey,
 		http: &http.Client{
 			Timeout: 60 * time.Second, // embedding 首次加载模型可能慢
 		},
@@ -177,6 +179,9 @@ func (c *MemoryClient) DeleteCollection(ctx context.Context, projectID string) e
 	if traceID != "" {
 		req.Header.Set("X-Trace-Id", traceID)
 	}
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey) // P0-1: 子服务鉴权
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return err
@@ -220,6 +225,9 @@ func (c *MemoryClient) post(ctx context.Context, path string, body any, out any)
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey) // P0-1: 子服务鉴权
+	}
 	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
 		req.Header.Set("X-Trace-Id", traceID)
 	}

@@ -59,6 +59,7 @@ type AppConfig struct {
 	LLMChatPath string
 	// P2: 记忆系统
 	MemoryServiceURL      string // Python 子服务地址（embedding + 混合检索）
+	MemoryServiceAPIKey   string // memory-service 鉴权 key(P0-1, 与 Python .env MEMORY_SERVICE_API_KEY 一致)
 	MemoryEmbedBatchRounds int    // 累计多少轮后批量 embed
 	MemoryInjectProject   bool   // 是否注入项目记忆 RAG top-5
 	MemoryInjectSoul      bool   // soul 是否默认注入
@@ -71,6 +72,7 @@ type AppConfig struct {
 	KnovisAPIBaseURL string // Knovis API 基础地址
 	// P5: RAG 文档服务(doc-service,8003)
 	DocServiceURL string // doc-service 地址(PDF 摄入 + RAG 检索)
+	DocServiceAPIKey string // doc-service 鉴权 key(P0-1, 与 Python .env DOC_SERVICE_API_KEY 一致)
 	// P6: local-agent 分发（前端下载引导用）
 	AgentDownloadBaseURL string // local-agent 下载引导地址(默认本项目 GitHub Releases)
 }
@@ -212,6 +214,7 @@ func loadAppConfig() *AppConfig {
 		LLMChatPath: getEnv("LLM_CHAT_PATH", "/chat/completions"),
 		// P2: 记忆系统
 		MemoryServiceURL:       getEnv("MEMORY_SERVICE_URL", "http://127.0.0.1:8002"),
+		MemoryServiceAPIKey:    getEnv("MEMORY_SERVICE_API_KEY", ""),
 		MemoryEmbedBatchRounds: getEnvInt("MEMORY_EMBED_BATCH_ROUNDS", 5),
 		MemoryInjectProject:    getEnvBool("MEMORY_INJECT_PROJECT", true),
 		MemoryInjectSoul:       getEnvBool("MEMORY_INJECT_SOUL", true),
@@ -223,7 +226,8 @@ func loadAppConfig() *AppConfig {
 		// P4: Knovis 用户/动态数据 API
 		KnovisAPIBaseURL: getEnv("KNOVIS_API_BASE_URL", "http://127.0.0.1:8080"),
 		// P5: RAG 文档服务
-		DocServiceURL: getEnv("DOC_SERVICE_URL", "http://127.0.0.1:8003"),
+		DocServiceURL:   getEnv("DOC_SERVICE_URL", "http://127.0.0.1:8003"),
+		DocServiceAPIKey: getEnv("DOC_SERVICE_API_KEY", ""),
 		// local-agent 下载引导地址（可配置：自建下载服务器/内网部署时覆盖）
 		AgentDownloadBaseURL: getEnv("AGENT_DOWNLOAD_BASE_URL", "https://github.com/YanhLi-tran/Knovis/releases/latest"),
 	}

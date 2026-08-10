@@ -111,19 +111,28 @@ type DeleteResult struct {
 // DocClient doc-service HTTP 客户端
 type DocClient struct {
 	baseURL string
+	apiKey  string // P0-1: 子服务鉴权 key(X-API-Key 头)
 	http    *http.Client
 }
 
 // NewDocClient 创建 doc-service 客户端
-func NewDocClient(baseURL string) *DocClient {
+func NewDocClient(baseURL string, apiKey string) *DocClient {
 	if baseURL == "" {
 		baseURL = "http://127.0.0.1:8003"
 	}
 	return &DocClient{
 		baseURL: baseURL,
+		apiKey:  apiKey,
 		http: &http.Client{
 			Timeout: 300 * time.Second, // 摄入大 PDF 可能慢
 		},
+	}
+}
+
+// setAuthHeaders 统一附加鉴权头(供 postJSON/GET/UploadFile 调用)
+func (c *DocClient) setAuthHeaders(req *http.Request) {
+	if c.apiKey != "" {
+		req.Header.Set("X-API-Key", c.apiKey) // P0-1: 子服务鉴权
 	}
 }
 
@@ -152,6 +161,7 @@ func (c *DocClient) ListDocuments(ctx context.Context, status, companyCode strin
 	if err != nil {
 		return nil, err
 	}
+	c.setAuthHeaders(req) // P0-1: 子服务鉴权
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("调用 doc-service /documents 失败: %w", err)
@@ -177,6 +187,7 @@ func (c *DocClient) DeleteDocument(ctx context.Context, id uint) (DeleteResult, 
 	if err != nil {
 		return DeleteResult{}, err
 	}
+	c.setAuthHeaders(req) // P0-1: 子服务鉴权
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return DeleteResult{}, fmt.Errorf("调用 doc-service DELETE /documents/%d 失败: %w", id, err)
@@ -222,6 +233,7 @@ func (c *DocClient) UploadFile(ctx context.Context, filename string, fileData io
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	c.setAuthHeaders(req) // P0-1: 子服务鉴权
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -267,6 +279,7 @@ func (c *DocClient) postJSON(ctx context.Context, path string, body any, out any
 	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
 		req.Header.Set("X-Trace-Id", traceID)
 	}
+	c.setAuthHeaders(req) // P0-1: 子服务鉴权
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("调用 doc-service %s 失败: %w", path, err)

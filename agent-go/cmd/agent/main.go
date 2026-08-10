@@ -73,7 +73,7 @@ func main() {
 	// Layer 2/3（Skill 按需加载）：load_skill 常驻 FC，knovis 等通过 load_skill 拉取
 	// P5: doc-service 客户端(RAG 文档检索 + 文档管理),早于工具注册创建
 	// P4: Knovis 客户端(用户/动态数据 owner,/auth/me 透传 + knovis Skill 复用)
-	docClient := rag.NewDocClient(appCfg.DocServiceURL)
+	docClient := rag.NewDocClient(appCfg.DocServiceURL, appCfg.DocServiceAPIKey)
 	knovisClient := knovis.NewClient(appCfg.KnovisAPIBaseURL)
 	registry := tools.NewRegistry()
 	info.RegisterWeatherTools(registry)

@@ -20,6 +20,7 @@ from typing import List, Optional, Any
 
 import uvicorn
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -52,6 +53,31 @@ class TraceFilter(logging.Filter):
         return True
 
 
+# ==================== 子服务鉴权(P0-1) ====================
+# 服务器部署安全: doc-service 暴露端口时, 无鉴权 = 任何人可调 /delete 删文档。
+# Go 端通过 X-API-Key 头传 key(与 .env DOC_SERVICE_API_KEY 一致)。
+# - DOC_SERVICE_API_KEY 为空时跳过校验(本地开发兼容)
+# - /health 豁免(健康检查无 key)
+# - 校验失败返回 401
+
+_API_KEY = os.getenv("DOC_SERVICE_API_KEY", "").strip()
+
+
+class ApiKeyMiddleware(BaseHTTPMiddleware):
+    """校验 X-API-Key 头(子服务间调用鉴权)."""
+
+    async def dispatch(self, request, call_next):
+        if not _API_KEY or request.url.path == "/health":
+            return await call_next(request)
+        provided = request.headers.get("X-API-Key", "")
+        if provided != _API_KEY:
+            return JSONResponse(
+                status_code=401,
+                content={"error": "缺少有效鉴权", "detail": "X-API-Key 无效或缺失"},
+            )
+        return await call_next(request)
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s [trace=%(trace_id)s]: %(message)s",
@@ -64,6 +90,7 @@ for _handler in logging.getLogger().handlers:
 
 app = FastAPI(title="Agent Doc Service", version="1.0.0")
 app.add_middleware(TraceContextMiddleware)
+app.add_middleware(ApiKeyMiddleware)  # P0-1: X-API-Key 鉴权
 
 
 # ==================== 启动预热 ====================

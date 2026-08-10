@@ -31,7 +31,7 @@ func main() {
 	registry := tools.NewRegistry()
 	info.RegisterWeatherTools(registry)
 	info.RegisterWebSearchTools(registry)
-	info.RegisterRAGSearchTools(registry, rag.NewDocClient(""))
+	info.RegisterRAGSearchTools(registry, rag.NewDocClient("", ""))
 	file.RegisterFileTools(registry, ws.NewHub())
 	sandbox.RegisterSandboxTools(registry, ws.NewHub())
 
@@ -43,7 +43,7 @@ func main() {
 	if err := skillReg.AttachToolBuilders(skills.KnovisSkillName, skills.KnovisToolBuilders(nil, knovis.NewClient(""))); err != nil {
 		panic(err)
 	}
-	if err := skillReg.AttachToolBuilders(skills.KBSummarySkillName, []skill.ToolBuilder{skills.BuildKBListDocs(rag.NewDocClient(""))}); err != nil {
+	if err := skillReg.AttachToolBuilders(skills.KBSummarySkillName, []skill.ToolBuilder{skills.BuildKBListDocs(rag.NewDocClient("", ""))}); err != nil {
 		panic(err)
 	}
 
