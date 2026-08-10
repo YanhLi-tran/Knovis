@@ -136,6 +136,11 @@ CREATE TABLE IF NOT EXISTS `agent_memories` (
   `source_session_id` VARCHAR(36) DEFAULT NULL COMMENT '来源Session（自动提取时记录）',
   `source_round` INT DEFAULT NULL COMMENT '来源轮次',
   `importance` INT DEFAULT 50 COMMENT '重要度0-100',
+  `effective_importance` INT NOT NULL DEFAULT 0 COMMENT '衰减后的有效重要度(初始=importance,随时间衰减)',
+  `tier` ENUM('hot','cold') NOT NULL DEFAULT 'hot' COMMENT '冷热分层:hot=在Chroma可检索 cold=仅MySQL不在Chroma',
+  `merged_from` JSON DEFAULT NULL COMMENT '合并来源:被合并的原记忆ID数组(仅summary类型合并记忆有值)',
+  `merged_at` DATETIME DEFAULT NULL COMMENT '合并时间(被合并的原记忆标记此字段表示已合并软删除)',
+  `last_decayed_at` DATETIME DEFAULT NULL COMMENT '上次衰减计算时间',
   `embedding_status` VARCHAR(16) DEFAULT 'pending' COMMENT '向量状态(pending/done/failed)',
   `last_accessed_at` DATETIME(3) DEFAULT NULL COMMENT '最后访问时间（LRU用）',
   `created_at` DATETIME(3) DEFAULT NULL COMMENT '创建时间',
@@ -145,6 +150,8 @@ CREATE TABLE IF NOT EXISTS `agent_memories` (
   INDEX `idx_agent_memories_owner_id` (`owner_id`),
   INDEX `idx_agent_memories_embedding_status` (`embedding_status`),
   INDEX `idx_agent_memories_deleted_at` (`deleted_at`),
+  INDEX `idx_tier_project` (`tier`, `project_id`),
+  INDEX `idx_effective_importance` (`effective_importance`),
   FULLTEXT INDEX `ft_memories_content` (`content`) WITH PARSER ngram
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆条目';
 
@@ -193,6 +200,23 @@ CREATE TABLE IF NOT EXISTS `agent_audit_logs` (
   INDEX `idx_agent_audit_logs_action` (`action`),
   INDEX `idx_agent_audit_logs_created_at` (`created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='审计日志';
+
+-- 检索指标聚合表（记忆检索在线监控,按分钟聚合）
+CREATE TABLE IF NOT EXISTS `memory_search_metrics` (
+  `id` BIGINT AUTO_INCREMENT PRIMARY KEY,
+  `project_id` VARCHAR(64) NOT NULL COMMENT '项目ID',
+  `bucket_minute` DATETIME NOT NULL COMMENT '聚合到分钟',
+  `request_count` INT NOT NULL DEFAULT 0,
+  `avg_total_ms` FLOAT DEFAULT 0,
+  `p50_total_ms` FLOAT DEFAULT 0,
+  `p95_total_ms` FLOAT DEFAULT 0,
+  `avg_bm25_count` FLOAT DEFAULT 0,
+  `avg_rag_count` FLOAT DEFAULT 0,
+  `cache_hit_rate` FLOAT DEFAULT 0,
+  `keyword_deweight_rate` FLOAT DEFAULT 0,
+  `rag_fail_count` INT DEFAULT 0,
+  INDEX `idx_project_minute` (`project_id`, `bucket_minute`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='记忆检索监控指标';
 
 -- token 黑名单（登出后 JWT 失效）
 CREATE TABLE IF NOT EXISTS `agent_token_blacklist` (
