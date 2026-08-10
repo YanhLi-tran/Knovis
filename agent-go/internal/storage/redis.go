@@ -146,10 +146,23 @@ func (c *Cache) GetString(ctx context.Context, key string) (string, bool, error)
 	return val, true, nil
 }
 
+// SetNX 分布式锁: SET key value NX EX ttl (仅在 key 不存在时设置成功)
+// 返回 true=拿到锁 / false=未拿到(他人持锁或 Redis 不可用, 不阻塞业务)
+func (c *Cache) SetNX(ctx context.Context, key string, value string, ttl time.Duration) bool {
+	if !c.Available() {
+		return false
+	}
+	ok, err := c.client.SetNX(ctx, key, value, ttl).Result()
+	if err != nil {
+		log.Printf("[WARN][storage] Redis SetNX 失败 key=%s 降级放行(不阻塞) err=%v", key, err)
+		return true // 降级: 拿不到锁时不阻塞 embed(宁可重复不可阻塞)
+	}
+	return ok
+}
+
 // Del 删除 key
 func (c *Cache) Del(ctx context.Context, keys ...string) error {
-	if !c.Available() {
-		return nil
+	if !c.Available() {		return nil
 	}
 	if len(keys) == 0 {
 		return nil

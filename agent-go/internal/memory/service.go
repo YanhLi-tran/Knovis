@@ -6,6 +6,7 @@ import (
 	"log"
 	"regexp"
 	"strings"
+	"time"
 
 	"agent-go/internal/config"
 	"agent-go/internal/storage"
@@ -214,6 +215,20 @@ func (s *Service) ShouldEmbed(ctx context.Context, projectID, ownerID string) bo
 func (s *Service) MaybeEmbedPending(ctx context.Context, projectID, ownerID string) {
 	if !s.ShouldEmbed(ctx, projectID, ownerID) {
 		return
+	}
+	// P0-3: Redis 分布式锁防重复 embed(多轮/多请求并发触发时只跑一次)
+	// key=memory:embed:lock:{projectID}, TTL 5 分钟(embed 通常 <1 分钟, 留余量)
+	// 未拿到锁(他人正在 embed 或 Redis 不可用)直接跳过
+	if s.repos.Cache != nil {
+		lockKey := fmt.Sprintf("memory:embed:lock:%s", projectID)
+		if !s.repos.Cache.SetNX(ctx, lockKey, "1", 5*time.Minute) {
+			log.Printf("[memory] 跳过 embed(分布式锁被占用, project=%s)", projectID)
+			return
+		}
+		// 释放锁(embed 完成后)
+		defer func() {
+			_ = s.repos.Cache.Del(context.Background(), lockKey)
+		}()
 	}
 	go func() {
 		log.Printf("[INFO][memory] MaybeEmbedPending goroutine 启动 (project=%s)", projectID)

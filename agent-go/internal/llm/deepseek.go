@@ -79,8 +79,8 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 			return
 		}
 
-		url := p.baseURL + p.chatPath
-		httpReq, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(body))
+		// P0-2: 带重试的请求(仅重试 429/5xx, 指数退避 3 次)
+		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+p.chatPath, bytes.NewReader(body))
 		if err != nil {
 			ch <- StreamChunk{FinishReason: "error"}
 			log.Printf("[llm] 创建请求失败: %v", err)
@@ -96,10 +96,10 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 		}
 		log.Printf("[INFO][llm] ChatStream 请求 model=%s trace=%s", p.model, traceID)
 
-		resp, err := p.client.Do(httpReq)
+		resp, err := p.doRequestWithRetry(ctx, httpReq)
 		if err != nil {
 			ch <- StreamChunk{FinishReason: "error"}
-			log.Printf("[llm] 请求失败: %v", err)
+			log.Printf("[llm] 请求失败(重试后仍失败): %v", err)
 			return
 		}
 		defer resp.Body.Close()
@@ -111,7 +111,7 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 			return
 		}
 
-		// 解析 SSE 流
+// 解析 SSE 流
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer
 
@@ -214,4 +214,35 @@ func ResolveAPIKey(headerKey, fallbackKey string) (string, error) {
 		return fallbackKey, nil
 	}
 	return "", fmt.Errorf("未提供 LLM API Key，请在请求头 X-LLM-API-Key 中传入或配置 LLM_API_KEY 环境变量")
+}
+
+func (p *DeepSeekProvider) doRequestWithRetry(ctx context.Context, req *http.Request) (*http.Response, error) {
+	maxRetries := 3
+	baseDelay := 500 * time.Millisecond
+	var lastErr error
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if attempt > 0 {
+			delay := baseDelay * time.Duration(1<<uint(attempt-1)) // 500ms, 1s, 2s
+			select {
+			case <-time.After(delay):
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+			log.Printf("[llm] 重试请求 (第 %d 次, 等待 %v)", attempt, delay)
+		}
+		resp, err := p.client.Do(req)
+		if err != nil {
+			lastErr = err
+			log.Printf("[llm] 请求失败(attempt=%d): %v", attempt+1, err)
+			continue // 网络错误也重试
+		}
+		if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+			lastErr = fmt.Errorf("API 返回 HTTP %d", resp.StatusCode)
+			log.Printf("[llm] 收到可重试状态码 %d (attempt=%d), 准备退避重试", resp.StatusCode, attempt+1)
+			resp.Body.Close() // 关闭 body 再重试
+			continue
+		}
+		return resp, nil // 200 或不可重试的 4xx
+	}
+	return nil, lastErr
 }
