@@ -149,7 +149,7 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 	}
 
 	// token 预算截断：保留最新历史轮次，从最旧截断超预算部分（保证最新细节 + 摘要一定在）
-	maxCtxLen := p.projectMaxContextLen(session)
+	maxCtxLen := p.effectiveMaxContextLen(sessionID)
 	if maxCtxLen > 0 {
 		estimator := llm.NewTokenEstimator()
 		total := estimator.EstimateMessages(messages)
@@ -163,20 +163,26 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 	return messages, maxRound, nil
 }
 
-// projectMaxContextLen 获取项目级上下文长度（默认 64000）
-func (p *persister) projectMaxContextLen(session *storage.Session) int {
-	const defaultMaxCtxLen = 64000
-	if session.ProjectID == "" {
-		return defaultMaxCtxLen
+// effectiveMaxContextLen 计算生效的上下文长度（token），优先级：用户自定义 > 项目级 > 默认 64000
+// 用户可在前端"Agent 行为设置"里配置（UserConfig.MaxContextLength，上限 1M 适配 DeepSeek 长上下文）
+func (p *persister) effectiveMaxContextLen(sessionID string) int {
+	session, err := p.repos.Session.GetByID(sessionID, "")
+	if err != nil || session == nil {
+		return storage.DefaultMaxContextLength
 	}
-	proj, err := p.repos.Project.GetByID(session.ProjectID, "")
-	if err != nil || proj == nil {
-		return defaultMaxCtxLen
+	fallback := storage.DefaultMaxContextLength
+	if session.ProjectID != "" {
+		if proj, perr := p.repos.Project.GetByID(session.ProjectID, ""); perr == nil && proj != nil && proj.MaxContextLength > 0 {
+			fallback = proj.MaxContextLength
+		}
 	}
-	if proj.MaxContextLength <= 0 {
-		return defaultMaxCtxLen
+	// 用户级优先（0=未设置 → 用项目级/默认）
+	if session.OwnerID != "" {
+		if uc, uerr := p.repos.UserConfig.GetByUserID(session.OwnerID); uerr == nil && uc != nil {
+			return uc.Behavior().EffectiveMaxContextLength(fallback)
+		}
 	}
-	return proj.MaxContextLength
+	return fallback
 }
 
 // saveRound 保存一轮 OTACO 的全部消息（原子事务）

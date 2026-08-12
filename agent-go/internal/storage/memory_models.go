@@ -19,6 +19,8 @@ type UserConfig struct {
 	MaxToolRounds int    `gorm:"default:0;comment:连续调用工具轮数上限（0=用全局默认10，范围1-50）" json:"max_tool_rounds"`
 	SandboxMode   string `gorm:"type:varchar(16);default:'';comment:沙箱权限模式 ask/auto/yolo（空=ask）" json:"sandbox_mode"`
 	BackupMode    string `gorm:"type:varchar(16);default:'';comment:文件备份模式 snapshot/git（空=snapshot）" json:"backup_mode"`
+	// P10: 用户级上下文大小（0=未设置 → 项目级/默认 64000；上限 1M=1048576，适配 DeepSeek 长上下文）
+	MaxContextLength int `gorm:"default:0;comment:用户自定义上下文大小 token数（0=用项目级/默认64000，范围1000-1048576）" json:"max_context_length"`
 	CreatedAt  time.Time      `gorm:"comment:创建时间" json:"created_at"`
 	UpdatedAt  time.Time      `gorm:"comment:更新时间" json:"updated_at"`
 	DeletedAt  gorm.DeletedAt `gorm:"index;comment:软删除时间" json:"deleted_at"`

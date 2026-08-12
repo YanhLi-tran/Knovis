@@ -92,6 +92,10 @@ CALL knovis_migrate_add_index('agent_memories', 'idx_tier_project',
 CALL knovis_migrate_add_index('agent_memories', 'idx_effective_importance',
   'INDEX `idx_effective_importance` (`effective_importance`)');
 
+-- 5.1) agent_user_config 用户级上下文大小（P10，用户可自定义；0=项目级/默认64000，上限1M）
+CALL knovis_migrate_add_column('agent_user_config', 'max_context_length',
+  '`max_context_length` INT NOT NULL DEFAULT 0 COMMENT ''用户自定义上下文大小 token数（0=用项目级/默认64000，范围1000-1048576）''');
+
 -- 6) 清理辅助过程（脚本可重复执行）
 DROP PROCEDURE IF EXISTS `knovis_migrate_add_column`;
 DROP PROCEDURE IF EXISTS `knovis_migrate_add_index`;

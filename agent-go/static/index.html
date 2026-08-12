@@ -2309,6 +2309,10 @@
                             <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" style="width:110px;" />
                         </div>
                         <div>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">上下文大小 <span class="opt">token，0=默认64000，上限1M</span></label>
+                            <input type="number" class="form-input" id="ucMaxContextLength" min="0" max="1048576" step="1000" value="0" style="width:140px;" />
+                        </div>
+                        <div>
                             <label class="form-label" style="margin-bottom:5px;font-size:12px;">文件备份方式 <span class="opt">YOLO 生效</span></label>
                             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                                 <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照</label>
@@ -4304,6 +4308,7 @@ async function loadUserConfig() {
                 $('ucPreferences').value = uc.preferences || '';
                 $('ucRawText').value = uc.raw_text || '';
                 $('ucMaxToolRounds').value = uc.max_tool_rounds || 0;
+                $('ucMaxContextLength').value = uc.max_context_length || 0;
                 const bm = uc.backup_mode || 'snapshot';
                 document.querySelectorAll('input[name="ucBackupMode"]').forEach(r => { r.checked = (r.value === bm); });
             }
@@ -4313,6 +4318,7 @@ async function loadUserConfig() {
 
 async function saveUserConfig() {
     const rounds = parseInt($('ucMaxToolRounds').value || '0', 10);
+    const maxCtx = parseInt($('ucMaxContextLength').value || '0', 10);
     const backupMode = document.querySelector('input[name="ucBackupMode"]:checked')?.value || 'snapshot';
     const body = {
         basic_info: $('ucBasicInfo').value.trim(),
@@ -4320,6 +4326,7 @@ async function saveUserConfig() {
         preferences: $('ucPreferences').value.trim(),
         raw_text: $('ucRawText').value.trim(),
         max_tool_rounds: Math.min(Math.max(rounds || 0, 0), 50),
+        max_context_length: Math.min(Math.max(maxCtx || 0, 0), 1048576),
         backup_mode: backupMode,
     };
     const btn = $('userConfigSave');

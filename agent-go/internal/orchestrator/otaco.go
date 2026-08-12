@@ -151,12 +151,8 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: query})
 
 		// 计算上下文占比并注入 system prompt 末尾（KV Cache 友好：前缀不变，占比放末尾）
-		maxCtxLen := 64000 // 默认上下文长度
-		if projectID != "" {
-			if p, perr := o.persister.repos.Project.GetByID(projectID, ""); perr == nil && p != nil && p.MaxContextLength > 0 {
-				maxCtxLen = p.MaxContextLength
-			}
-		}
+		// 生效上下文长度：用户自定义 > 项目级 > 默认 64000（persister.effectiveMaxContextLen）
+		maxCtxLen := o.persister.effectiveMaxContextLen(sessionID)
 		estimator := llm.NewTokenEstimator()
 		totalTokens := estimator.EstimateMessages(messages)
 		pct := estimator.EstimatePercentage(totalTokens, maxCtxLen)

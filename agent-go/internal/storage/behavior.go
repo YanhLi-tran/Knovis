@@ -8,10 +8,18 @@ type AgentBehavior struct {
 	SandboxMode string
 	// BackupMode 文件备份模式：snapshot / git（空=snapshot）
 	BackupMode string
+	// MaxContextLength 用户自定义上下文大小 token数（0=未设置 → 项目级/默认 64000）
+	MaxContextLength int
 }
 
 // DefaultMaxToolRounds 连续工具轮数全局默认
 const DefaultMaxToolRounds = 10
+
+// DefaultMaxContextLength 项目上下文长度默认（token）
+const DefaultMaxContextLength = 64000
+
+// MaxContextLengthUpperBound 用户可设置的最大上下文（DeepSeek 1M）
+const MaxContextLengthUpperBound = 1048576
 
 // EffectiveMaxToolRounds 计算生效的连续工具轮上限（0=未设置 → 默认10，越界收敛到1-50）
 func (b AgentBehavior) EffectiveMaxToolRounds() int {
@@ -52,14 +60,33 @@ func (b AgentBehavior) IsAutoApprove() bool {
 	return mode == "auto" || mode == "yolo"
 }
 
+// EffectiveMaxContextLength 计算生效的用户上下文长度（0=未设置 → 返回 fallback；越界收敛到 1000-1M）
+// fallback 由调用方传入（项目级 MaxContextLength 或默认 64000），保证优先级：用户 > 项目 > 默认
+func (b AgentBehavior) EffectiveMaxContextLength(fallback int) int {
+	if b.MaxContextLength <= 0 {
+		if fallback <= 0 {
+			return DefaultMaxContextLength
+		}
+		return fallback
+	}
+	if b.MaxContextLength < 1000 {
+		return 1000
+	}
+	if b.MaxContextLength > MaxContextLengthUpperBound {
+		return MaxContextLengthUpperBound
+	}
+	return b.MaxContextLength
+}
+
 // Behavior 从 UserConfig 提取 Agent 行为设置（nil 时返回全默认）
 func (uc *UserConfig) Behavior() AgentBehavior {
 	if uc == nil {
 		return AgentBehavior{}
 	}
 	return AgentBehavior{
-		MaxToolRounds: uc.MaxToolRounds,
-		SandboxMode:   uc.SandboxMode,
-		BackupMode:    uc.BackupMode,
+		MaxToolRounds:    uc.MaxToolRounds,
+		SandboxMode:      uc.SandboxMode,
+		BackupMode:       uc.BackupMode,
+		MaxContextLength: uc.MaxContextLength,
 	}
 }
