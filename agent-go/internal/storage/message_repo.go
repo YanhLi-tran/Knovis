@@ -97,6 +97,16 @@ func (r *MessageRepository) GetUnsummarizedBeforeRound(sessionID string, beforeR
 	return msgs, err
 }
 
+// GetUnsummarizedBySessionID 查询某 Session 全部未压缩消息（按时间正序）
+// 用于按需压缩：loadHistory 只加载未压缩历史（已压缩的由摘要代表，不再进上下文）
+func (r *MessageRepository) GetUnsummarizedBySessionID(sessionID string) ([]Message, error) {
+	var msgs []Message
+	err := r.db.Where("session_id = ? AND summarized = ?", sessionID, false).
+		Order("round ASC, id ASC").
+		Find(&msgs).Error
+	return msgs, err
+}
+
 // MarkSummarized 批量标记消息为已压缩（summarized=true + summarized_at=now）
 // 压缩成功后调用，后续 loadHistory 不再加载这些消息
 // summarized_at 作为 TTL 起算点，7 天后若仍未被用户恢复查看，由消息 TTL 任务软删

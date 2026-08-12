@@ -170,8 +170,12 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			// 超 90% 强制同步压缩（兜底，防止 LLM 未自主调用工具导致超长）
 			if pct >= 90 && sessionID != "" {
 				log.Printf("[WARN][otaco] 上下文超 90%%，强制同步压缩 sessionID=%s", sessionID)
-				o.persister.maybeSummarize(sessionID, resolvedKey, provider)
-				// 强制压缩后需要重新加载历史（摘要更新，窗口外消息已标记）
+				if n, cerr := o.persister.summarizeHistory(sessionID, resolvedKey, provider); cerr != nil {
+					log.Printf("[WARN][otaco] 强制压缩失败 sessionID=%s: %v", sessionID, cerr)
+				} else if n > 0 {
+					log.Printf("[INFO][otaco] 强制压缩完成 sessionID=%s 压缩=%d 条", sessionID, n)
+				}
+				// 强制压缩后需要重新加载历史（摘要更新，已压缩消息不再加载）
 				// 简化：本轮不重载，下一轮自然加载新摘要
 			}
 		}
@@ -275,7 +279,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 					queryToSave = query
 				}
 				obs := &observeInfo{decision: "pass", reason: "已获取所有需要的信息"}
-				if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, nil, finalAnswer, resolvedKey, provider); err != nil {
+				if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, nil, finalAnswer); err != nil {
 				log.Printf("[ERROR][otaco] 保存最终轮失败 sessionID=%s round=%d: %v", sessionID, baseRound+iteration+1, err)
 			}
 			}
@@ -310,7 +314,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			// 持久化 rollback 轮
 			if sessionID != "" {
 				obs := &observeInfo{decision: "rollback", reason: observeReason}
-				if err := o.persister.saveRound(sessionID, iteration+1, "", obs, cleanedContent, toolCalls, nil, "", resolvedKey, provider); err != nil {
+				if err := o.persister.saveRound(sessionID, iteration+1, "", obs, cleanedContent, toolCalls, nil, ""); err != nil {
 				log.Printf("[ERROR][otaco] 保存 rollback 轮失败 sessionID=%s round=%d: %v", sessionID, iteration+1, err)
 			}
 			}
@@ -405,7 +409,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 				// 持久化失败轮（含工具结果）
 				if sessionID != "" {
 					obs := &observeInfo{decision: "retry", reason: fmt.Sprintf("连续 %d 轮失败", consecutiveErrors)}
-					if err := o.persister.saveRound(sessionID, iteration+1, "", obs, cleanedContent, toolCalls, toolResults, "", resolvedKey, provider); err != nil {
+					if err := o.persister.saveRound(sessionID, iteration+1, "", obs, cleanedContent, toolCalls, toolResults, ""); err != nil {
 				log.Printf("[ERROR][otaco] 保存失败轮失败 sessionID=%s round=%d: %v", sessionID, iteration+1, err)
 			}
 				}
@@ -452,7 +456,7 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 				queryToSave = query
 			}
 			obs := &observeInfo{decision: obsDecision, reason: obsReason}
-			if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, toolResults, "", resolvedKey, provider); err != nil {
+			if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, toolResults, ""); err != nil {
 			log.Printf("[ERROR][otaco] 保存轮次失败 sessionID=%s round=%d: %v", sessionID, baseRound+iteration+1, err)
 		}
 		}
@@ -994,9 +998,9 @@ func (o *Orchestrator) buildTools(sessionID string) []llm.ToolDefinition {
 }
 
 // handleSummarizeHistory 处理 summarize_history 工具调用
-// LLM 自主调用（上下文占比超 80% 时），触发异步压缩并返回状态
-// 压缩范围：窗口外未压缩消息 + 旧摘要合并重压
-// 压缩是异步的，LLM 收到"已触发"后继续，下一轮加载新摘要
+// LLM 自主调用（上下文占比超 80% 时），Go 端【同步】压缩全部未压缩历史
+// 压缩范围：全部未压缩消息 + 旧摘要合并重压；压缩后历史轮次标记，由摘要代表
+// 同步执行：工具返回确定的"已压缩 N 轮"结果，LLM 下一轮加载新摘要
 func (o *Orchestrator) handleSummarizeHistory(ctx context.Context, ch chan<- SSEEvent, call llm.ToolCall, sessionID string, apiKey string, provider llm.Provider) tools.ToolResult {
 	result := tools.ToolResult{
 		ToolCallID: call.ID,
@@ -1019,11 +1023,21 @@ func (o *Orchestrator) handleSummarizeHistory(ctx context.Context, ch chan<- SSE
 	}
 	log.Printf("[INFO][otaco] LLM 自主调用 summarize_history sessionID=%s reason=%s", sessionID, reason)
 
-	// 触发异步压缩（不阻塞 OTACO 循环，下一轮加载新摘要）
-	o.persister.maybeSummarize(sessionID, apiKey, provider)
+	// 同步压缩全部未压缩历史（合并重压：旧摘要 + 全部未压缩消息）
+	n, err := o.persister.summarizeHistory(sessionID, apiKey, provider)
+	if err != nil {
+		log.Printf("[WARN][otaco] summarize_history 压缩失败 sessionID=%s: %v", sessionID, err)
+		result.Content = fmt.Sprintf(`{"status":"failed","message":"历史压缩失败：%s"}`, err.Error())
+		return result
+	}
+	if n == 0 {
+		// 可能已在压缩中（并发）或无未压缩消息
+		result.Content = `{"status":"ok","message":"已无未压缩的历史消息，摘要已是最新。"}`
+		return result
+	}
 
-	// 返回状态给 LLM（摘要内容走 system prompt，工具只返回状态）
-	result.Content = `{"status":"triggered","message":"历史对话压缩已触发，下一轮对话将加载压缩后的摘要。当前对话可继续，无需等待。"}`
+	// 返回确定的压缩结果给 LLM
+	result.Content = fmt.Sprintf(`{"status":"ok","compressed_messages":%d,"message":"历史对话已压缩为摘要，共 %d 条消息。后续轮次将加载新摘要，当前对话内容不受影响。"}`, n, n)
 	return result
 }
 

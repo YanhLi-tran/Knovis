@@ -30,7 +30,8 @@ type persister struct {
 }
 
 const (
-	defaultSlidingWindow = 10  // 滑动窗口保留的轮数（最近 N 轮完整消息进上下文）
+	// 按需压缩模式：无固定滑动窗口；历史全量拼接（token 预算内），
+	// 上下文占比 ≥80% 由 LLM 自主调 summarize_history 压缩，≥90% Go 强制压缩
 	globalMaxConcurrent  = 20  // 全局 OTACO 并发上限
 	perUserMaxConcurrent = 3   // 单用户 OTACO 并发上限
 )
@@ -73,7 +74,9 @@ func (p *persister) acquireConcurrency(clientID string) (release func(), ok bool
 }
 
 // loadHistory 加载历史对话，转换为 llm.Message
-// 包含 summary（作为 system 补充）+ 最近 N 轮
+// 按需压缩模式（无固定窗口）：
+//   - 只加载未压缩的历史轮次（已压缩的由摘要代表，不再进上下文）
+//   - 布局：[system 稳定前缀] + [历史轮次（从旧到新，token 预算内截断）] + [摘要（独立消息放最后，KV Cache 友好）]
 // 返回：messages, 当前 session 的 maxRound（用于新对话接续轮次）, error
 func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPrompt string) ([]llm.Message, int, error) {
 	if sessionID == "" {
@@ -90,21 +93,6 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 		return nil, 0, fmt.Errorf("session %s 不存在", sessionID)
 	}
 
-	// 拼接 system prompt + summary
-	sysContent := systemPrompt
-	if session.Summary != "" {
-		sysContent += "\n\n## 历史对话摘要\n" + session.Summary
-	}
-
-	messages := []llm.Message{{Role: llm.RoleSystem, Content: sysContent}}
-
-	// 拉取最近 N 轮
-	recentMsgs, err := p.repos.Message.GetRecentBySessionID(sessionID, defaultSlidingWindow)
-	if err != nil {
-		log.Printf("[ERROR][otaco] loadHistory GetRecentBySessionID 失败 sessionID=%s: %v", sessionID, err)
-		return nil, 0, err
-	}
-
 	// 查询当前 maxRound（用于新对话接续轮次）
 	maxRound, err := p.repos.Message.CountRounds(sessionID)
 	if err != nil {
@@ -112,16 +100,21 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 		return nil, 0, err
 	}
 
-	for _, m := range recentMsgs {
-		// 防御：跳过已压缩的消息（理论上窗口内不会有，但防止窗口缩小等边缘情况）
-		if m.Summarized {
-			continue
-		}
+	messages := []llm.Message{{Role: llm.RoleSystem, Content: systemPrompt}}
+
+	// 拉取全部未压缩历史（已压缩的由摘要代表）
+	unsummarized, err := p.repos.Message.GetUnsummarizedBySessionID(sessionID)
+	if err != nil {
+		log.Printf("[ERROR][otaco] loadHistory GetUnsummarizedBySessionID 失败 sessionID=%s: %v", sessionID, err)
+		return nil, 0, err
+	}
+
+	// 组装历史轮次（从旧到新；跳过 observe 决策记录与空 assistant 消息）
+	for _, m := range unsummarized {
 		switch m.Role {
 		case "user":
 			messages = append(messages, llm.Message{Role: llm.RoleUser, Content: m.Content})
 		case "assistant":
-			// 跳过 observe 阶段的决策记录（content 为空，仅用于内部决策，不应进入 LLM 上下文）
 			if m.Stage == "observe" {
 				continue
 			}
@@ -146,7 +139,44 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 		}
 	}
 
+	// 摘要作为独立消息放消息列表最末尾（易变内容后置，KV Cache 友好）
+	// 已压缩的历史轮次不再进上下文，由该摘要代表
+	if session.Summary != "" {
+		messages = append(messages, llm.Message{
+			Role:    llm.RoleUser,
+			Content: "## 历史对话摘要\n" + session.Summary,
+		})
+	}
+
+	// token 预算截断：保留最新历史轮次，从最旧截断超预算部分（保证最新细节 + 摘要一定在）
+	maxCtxLen := p.projectMaxContextLen(session)
+	if maxCtxLen > 0 {
+		estimator := llm.NewTokenEstimator()
+		total := estimator.EstimateMessages(messages)
+		for total > maxCtxLen && len(messages) > 1 {
+			// 从头部（最旧）丢，保留 system 与末尾摘要
+			messages = append(messages[:1], messages[2:]...)
+			total = estimator.EstimateMessages(messages)
+		}
+	}
+
 	return messages, maxRound, nil
+}
+
+// projectMaxContextLen 获取项目级上下文长度（默认 64000）
+func (p *persister) projectMaxContextLen(session *storage.Session) int {
+	const defaultMaxCtxLen = 64000
+	if session.ProjectID == "" {
+		return defaultMaxCtxLen
+	}
+	proj, err := p.repos.Project.GetByID(session.ProjectID, "")
+	if err != nil || proj == nil {
+		return defaultMaxCtxLen
+	}
+	if proj.MaxContextLength <= 0 {
+		return defaultMaxCtxLen
+	}
+	return proj.MaxContextLength
 }
 
 // saveRound 保存一轮 OTACO 的全部消息（原子事务）
@@ -158,7 +188,7 @@ func (p *persister) loadHistory(ctx context.Context, sessionID string, systemPro
 // toolResults: 工具返回结果
 // finalAnswer: 非空表示本轮有最终答案
 // apiKey/provider: 用于异步摘要生成的 LLM 调用
-func (p *persister) saveRound(sessionID string, round int, query string, observe *observeInfo, thought string, toolCalls []llm.ToolCall, toolResults []toolResultRecord, finalAnswer string, apiKey string, provider llm.Provider) error {
+func (p *persister) saveRound(sessionID string, round int, query string, observe *observeInfo, thought string, toolCalls []llm.ToolCall, toolResults []toolResultRecord, finalAnswer string) error {
 	if sessionID == "" {
 		return nil
 	}
@@ -250,11 +280,6 @@ func (p *persister) saveRound(sessionID string, round int, query string, observe
 		log.Printf("[WARN][otaco] TouchLastActive 失败 sessionID=%s: %v", sessionID, err)
 	}
 
-	// 检查是否需要异步生成摘要（窗口外有未压缩消息时触发）
-	if round > defaultSlidingWindow {
-		p.maybeSummarize(sessionID, apiKey, provider)
-	}
-
 	return nil
 }
 
@@ -272,90 +297,78 @@ type toolResultRecord struct {
 	errMsg     string
 }
 
-// maybeSummarize 异步生成历史摘要（去重）
-// 策略（合并重压）：旧摘要 + 窗口外未压缩消息 一起交给 LLM，生成新的合并摘要
-// - 查询窗口外（round < maxRound - window + 1）且 summarized=false 的消息
+// summarizeHistory 同步压缩历史（按需压缩，无固定窗口）
+// 策略（合并重压）：旧摘要 + 全部未压缩消息 一起交给 LLM，生成新的合并摘要
+// - 查询全部 summarized=false 的消息（已压缩的由摘要代表，不再处理）
 // - 拼接旧摘要 + 新消息，调 LLM 生成新摘要（长度可控）
-// - 压缩成功后标记消息 summarized=true（后续 loadHistory 跳过）
-// - 失败不阻断，留待下次 maybeSummarize 重试（消息未标记，会被再次查到）
-func (p *persister) maybeSummarize(sessionID string, apiKey string, provider llm.Provider) {
+// - 压缩成功后标记消息 summarized=true（后续 loadHistory 跳过，由摘要代表）
+// - 同步执行：由 summarize_history 工具（LLM 自主）与 90% Go 强制调用
+// 返回：本次压缩的消息条数；并发去重（同 session 已在压缩时返回 0, nil）
+func (p *persister) summarizeHistory(sessionID string, apiKey string, provider llm.Provider) (int, error) {
 	if _, loaded := p.summarizing.LoadOrStore(sessionID, true); loaded {
-		return // 已在生成中
+		return 0, nil // 已在压缩中（并发工具调用 + 90% 强制同时触发）
 	}
-	go func() {
-		log.Printf("[INFO][otaco] 摘要生成 goroutine 启动 sessionID=%s", sessionID)
-		defer p.summarizing.Delete(sessionID)
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		defer cancel()
+	defer p.summarizing.Delete(sessionID)
 
-		// 查询当前 maxRound，计算窗口起始 round
-		maxRound, err := p.repos.Message.CountRounds(sessionID)
-		if err != nil {
-			log.Printf("[ERROR][otaco] maybeSummarize CountRounds 失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
-		startRound := maxRound - defaultSlidingWindow + 1
-		if startRound < 1 {
-			log.Printf("[INFO][otaco] maybeSummarize 窗口未满跳过 sessionID=%s maxRound=%d", sessionID, maxRound)
-			return
-		}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
-		// 查询窗口外且未压缩的消息
-		msgs, err := p.repos.Message.GetUnsummarizedBeforeRound(sessionID, startRound)
-		if err != nil {
-			log.Printf("[WARN][otaco] maybeSummarize GetUnsummarizedBeforeRound 失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
-		if len(msgs) == 0 {
-			log.Printf("[INFO][otaco] maybeSummarize 无未压缩消息 sessionID=%s", sessionID)
-			return
-		}
+	// 查询全部未压缩消息
+	msgs, err := p.repos.Message.GetUnsummarizedBySessionID(sessionID)
+	if err != nil {
+		log.Printf("[ERROR][otaco] summarizeHistory GetUnsummarizedBySessionID 失败 sessionID=%s: %v", sessionID, err)
+		return 0, err
+	}
+	if len(msgs) == 0 {
+		log.Printf("[INFO][otaco] summarizeHistory 无未压缩消息 sessionID=%s", sessionID)
+		return 0, nil
+	}
 
-		// 加载旧摘要（合并重压：旧摘要 + 新消息一起压缩）
-		session, err := p.repos.Session.GetByID(sessionID, "")
-		if err != nil || session == nil {
-			log.Printf("[WARN][otaco] maybeSummarize GetSession 失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
-		oldSummary := session.Summary
+	// 加载旧摘要（合并重压：旧摘要 + 全部未压缩消息一起压缩）
+	session, err := p.repos.Session.GetByID(sessionID, "")
+	if err != nil || session == nil {
+		log.Printf("[WARN][otaco] summarizeHistory GetSession 失败 sessionID=%s: %v", sessionID, err)
+		return 0, err
+	}
+	oldSummary := session.Summary
 
-		// 拼接文本：旧摘要 + 新消息
-		var sb strings.Builder
-		if oldSummary != "" {
-			sb.WriteString("## 已有摘要\n")
-			sb.WriteString(oldSummary)
-			sb.WriteString("\n\n## 新增对话内容\n")
-		}
-		for _, m := range msgs {
-			sb.WriteString(fmt.Sprintf("[第%d轮/%s/%s] %s\n", m.Round, m.Role, m.Stage, truncate(m.Content, 500)))
-		}
+	// 拼接文本：旧摘要 + 新消息
+	var sb strings.Builder
+	if oldSummary != "" {
+		sb.WriteString("## 已有摘要\n")
+		sb.WriteString(oldSummary)
+		sb.WriteString("\n\n## 新增对话内容\n")
+	}
+	for _, m := range msgs {
+		sb.WriteString(fmt.Sprintf("[第%d轮/%s/%s] %s\n", m.Round, m.Role, m.Stage, truncate(m.Content, 500)))
+	}
 
-		// 调用 LLM 生成合并摘要
-		summary, err := p.callSummaryLLM(ctx, oldSummary, sb.String(), apiKey, provider)
-		if err != nil {
-			log.Printf("[WARN][otaco] maybeSummarize 生成摘要失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
+	// 调用 LLM 生成合并摘要
+	summary, err := p.callSummaryLLM(ctx, oldSummary, sb.String(), apiKey, provider)
+	if err != nil {
+		log.Printf("[WARN][otaco] summarizeHistory 生成摘要失败 sessionID=%s: %v", sessionID, err)
+		return 0, err
+	}
 
-		// 写入新摘要
-		if err := p.repos.Session.UpdateSummary(sessionID, "", summary); err != nil {
-			log.Printf("[WARN][otaco] maybeSummarize 写入摘要失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
+	// 写入新摘要
+	if err := p.repos.Session.UpdateSummary(sessionID, "", summary); err != nil {
+		log.Printf("[WARN][otaco] summarizeHistory 写入摘要失败 sessionID=%s: %v", sessionID, err)
+		return 0, err
+	}
 
-		// 标记消息为已压缩（后续 loadHistory 跳过）
-		ids := make([]uint, 0, len(msgs))
-		for _, m := range msgs {
-			ids = append(ids, m.ID)
-		}
-		if err := p.repos.Message.MarkSummarized(ids); err != nil {
-			log.Printf("[WARN][otaco] maybeSummarize 标记已压缩失败 sessionID=%s: %v", sessionID, err)
-			return
-		}
+	// 标记消息为已压缩（后续 loadHistory 跳过，由摘要代表）
+	ids := make([]uint, 0, len(msgs))
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	if err := p.repos.Message.MarkSummarized(ids); err != nil {
+		log.Printf("[WARN][otaco] summarizeHistory 标记已压缩失败 sessionID=%s: %v", sessionID, err)
+		return 0, err
+	}
 
-		log.Printf("[INFO][otaco] 摘要生成完成 sessionID=%s 压缩消息数=%d 摘要长度=%d",
-			sessionID, len(msgs), len([]rune(summary)))
-	}()
+	log.Printf("[INFO][otaco] 摘要生成完成 sessionID=%s 压缩消息数=%d 摘要长度=%d",
+		sessionID, len(msgs), len([]rune(summary)))
+	return len(msgs), nil
 }
 
 // callSummaryLLM 调用 LLM 生成摘要（合并重压）
