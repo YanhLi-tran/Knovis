@@ -105,7 +105,16 @@ func main() {
 		knovisFCTotal += toks
 	}
 	fmt.Printf("%-28s %10s %10d\n", "3 工具 FC 合计", "", knovisFCTotal)
-	fmt.Printf("分层节省/轮: %d tokens（%d - %d 元信息）\n", knovisFCTotal-metaTokens, knovisFCTotal, metaTokens)
+	// 口径：仅对比 knovis 相关部分（3 工具 FC 化 vs knovis 单条元信息），与文档一致
+	knovisMetaTokens := 0
+	for _, m := range metaList {
+		if m.Name == "knovis" {
+			line := fmt.Sprintf("- %s: %s（触发: %s）", m.Name, m.Description, m.Trigger)
+			knovisMetaTokens = estimator.Estimate(line)
+		}
+	}
+	fmt.Printf("分层节省/轮: %d tokens（knovis 3 工具 FC 化 %d - knovis 元信息 %d；全部 skill 元信息合计 %d）\n",
+		knovisFCTotal-knovisMetaTokens, knovisFCTotal, knovisMetaTokens, metaTokens)
 
 	// ===== 5) 汇总 =====
 	fmt.Println()
