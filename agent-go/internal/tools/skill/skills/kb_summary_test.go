@@ -13,7 +13,7 @@ import (
 
 // TestKBListDocsToolDef kb_list_docs 工具定义符合预期（内置 Go 工具，附加到 SKILL.md 定义的 kb_summary）
 func TestKBListDocsToolDef(t *testing.T) {
-	builder := BuildKBListDocs(rag.NewDocClient(""))
+	builder := BuildKBListDocs(rag.NewDocClient("", ""))
 	toolDef, handler, err := builder(context.Background(), "any-user")
 	if err != nil {
 		t.Fatalf("构建工具失败: %v", err)
@@ -28,7 +28,7 @@ func TestKBListDocsToolDef(t *testing.T) {
 
 // TestKBListDocsHandler docClient 不可用时 handler 应返回友好错误而非 panic
 func TestKBListDocsHandler(t *testing.T) {
-	builder := BuildKBListDocs(rag.NewDocClient("http://127.0.0.1:1")) // 不可达端口
+	builder := BuildKBListDocs(rag.NewDocClient("http://127.0.0.1:1", "")) // 不可达端口
 	_, handler, err := builder(context.Background(), "user-1")
 	if err != nil {
 		t.Fatalf("构建失败: %v", err)
