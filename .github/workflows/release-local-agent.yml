@@ -119,4 +119,13 @@ jobs:
             ### Windows SmartScreen 提示
             解压后首次运行 `local-agent.exe` 会弹"Windows 已保护你的电脑"(未签名 exe 标准拦截)。本程序开源(见源码 `local-agent/`)，可放心运行：
             点击 **更多信息** → **仍要运行** 即可。
+
+            ### Windows Defender 病毒误报处理
+            Go 编译的未签名 exe 涉及网络/文件/命令操作，可能被 Windows Defender 启发式误报。本程序完全开源（见 `local-agent/`），无恶意代码。
+            若下载或运行时被拦截：
+            1. Windows 安全中心 → 病毒和威胁防护 → 管理设置 → 临时关闭"实时保护"
+            2. 下载 zip 并解压
+            3. "排除项" → 添加解压目录（如 `D:\local-agent\`）
+            4. 重新开启"实时保护"
+            5. 双击运行 `local-agent.exe`
           files: dist/local-agent-*
