@@ -137,7 +137,8 @@ func (c *DocClient) setAuthHeaders(req *http.Request) {
 }
 
 // Search RAG 检索(BM25 + 向量融合 + 段落召回)
-func (c *DocClient) Search(ctx context.Context, query string, topK int, docIDs []int) (SearchResponse, error) {
+// userID 非空时通过 X-Owner-Id header 传给 doc-service 做文档权限隔离(全局共享+用户私有)
+func (c *DocClient) Search(ctx context.Context, query string, topK int, docIDs []int, userID string) (SearchResponse, error) {
 	body := map[string]any{
 		"query":  query,
 		"top_k":  topK,
@@ -146,22 +147,30 @@ func (c *DocClient) Search(ctx context.Context, query string, topK int, docIDs [
 		body["doc_ids"] = docIDs
 	}
 	var resp SearchResponse
-	if err := c.postJSON(ctx, "/rag/search", body, &resp); err != nil {
+	// 带_owner_id header 做权限隔离
+	headers := map[string]string{}
+	if userID != "" {
+		headers["X-Owner-Id"] = userID
+	}
+	if err := c.postJSONWithHeaders(ctx, "/rag/search", body, &resp, headers); err != nil {
 		return resp, err
 	}
-	log.Printf("[INFO][rag] POST /rag/search query=%s results=%d bm25=%d rag=%d elapsed=%dms",
-		query, len(resp.Results), resp.BM25Count, resp.RAGCount, resp.ElapsedMs)
+	log.Printf("[INFO][rag] POST /rag/search query=%s user=%s results=%d bm25=%d rag=%d elapsed=%dms",
+		query, userID, len(resp.Results), resp.BM25Count, resp.RAGCount, resp.ElapsedMs)
 	return resp, nil
 }
 
-// ListDocuments 文档列表
-func (c *DocClient) ListDocuments(ctx context.Context, status, companyCode string) ([]Document, error) {
+// ListDocuments 文档列表(userID 非空时只返回全局共享+该用户私有文档)
+func (c *DocClient) ListDocuments(ctx context.Context, status, companyCode, userID string) ([]Document, error) {
 	u := fmt.Sprintf("%s/documents?status=%s&company_code=%s", c.baseURL, status, companyCode)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil, err
 	}
-	c.setAuthHeaders(req) // P0-1: 子服务鉴权
+	c.setAuthHeaders(req)
+	if userID != "" {
+		req.Header.Set("X-Owner-Id", userID) // 文档权限隔离
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("调用 doc-service /documents 失败: %w", err)
@@ -204,19 +213,23 @@ func (c *DocClient) DeleteDocument(ctx context.Context, id uint) (DeleteResult, 
 	return out, nil
 }
 
-// Scan 扫描本地目录导入
-func (c *DocClient) Scan(ctx context.Context, dirPath string) (ScanResult, error) {
+// Scan 扫描本地目录导入(userID 空=全局共享,非空=用户私有)
+func (c *DocClient) Scan(ctx context.Context, dirPath, userID string) (ScanResult, error) {
 	var out ScanResult
-	if err := c.postJSON(ctx, "/documents/scan", map[string]any{"dir_path": dirPath}, &out); err != nil {
+	headers := map[string]string{}
+	if userID != "" {
+		headers["X-Owner-Id"] = userID
+	}
+	if err := c.postJSONWithHeaders(ctx, "/documents/scan", map[string]any{"dir_path": dirPath}, &out, headers); err != nil {
 		return out, err
 	}
-	log.Printf("[INFO][rag] POST /documents/scan dir=%s total=%d success=%d failed=%d",
-		dirPath, out.Total, out.Success, out.Failed)
+	log.Printf("[INFO][rag] POST /documents/scan dir=%s user=%s total=%d success=%d failed=%d",
+		dirPath, userID, out.Total, out.Success, out.Failed)
 	return out, nil
 }
 
-// UploadFile 上传 PDF 文件(转发 multipart)
-func (c *DocClient) UploadFile(ctx context.Context, filename string, fileData io.Reader) (map[string]any, error) {
+// UploadFile 上传 PDF 文件(转发 multipart, userID 空=全局共享,非空=用户私有)
+func (c *DocClient) UploadFile(ctx context.Context, filename string, fileData io.Reader, userID string) (map[string]any, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	fw, err := w.CreateFormFile("file", filename)
@@ -233,7 +246,10 @@ func (c *DocClient) UploadFile(ctx context.Context, filename string, fileData io
 		return nil, err
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	c.setAuthHeaders(req) // P0-1: 子服务鉴权
+	c.setAuthHeaders(req)
+	if userID != "" {
+		req.Header.Set("X-Owner-Id", userID) // 文档权限隔离
+	}
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -267,6 +283,11 @@ func (c *DocClient) Health(ctx context.Context) bool {
 
 // postJSON 通用 POST JSON
 func (c *DocClient) postJSON(ctx context.Context, path string, body any, out any) error {
+	return c.postJSONWithHeaders(ctx, path, body, out, nil)
+}
+
+// postJSONWithHeaders 带额外 header 的 POST JSON(用于 X-Owner-Id 文档权限隔离)
+func (c *DocClient) postJSONWithHeaders(ctx context.Context, path string, body any, out any, headers map[string]string) error {
 	b, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("请求序列化失败: %w", err)
@@ -279,7 +300,10 @@ func (c *DocClient) postJSON(ctx context.Context, path string, body any, out any
 	if traceID := trace.TraceIDFromContext(ctx); traceID != "" {
 		req.Header.Set("X-Trace-Id", traceID)
 	}
-	c.setAuthHeaders(req) // P0-1: 子服务鉴权
+	c.setAuthHeaders(req)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("调用 doc-service %s 失败: %w", path, err)

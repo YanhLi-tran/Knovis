@@ -46,7 +46,8 @@ func BuildKBListDocs(docClient *rag.DocClient) skill.ToolBuilder {
 			if s, ok := args["status"].(string); ok && s != "" {
 				status = s
 			}
-			docs, err := docClient.ListDocuments(ctx, status, companyCode)
+			// 文档权限隔离：只列该用户可见文档(全局共享 + 用户私有)
+			docs, err := docClient.ListDocuments(ctx, status, companyCode, userID)
 			if err != nil {
 				log.Printf("[WARN][skill] kb_list_docs 失败 err=%v", err)
 				return fmt.Sprintf("【文档列表】获取失败：%s", err.Error()), nil

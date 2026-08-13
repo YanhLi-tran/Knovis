@@ -8,11 +8,13 @@ import (
 )
 
 // uploadDocument 上传 PDF(转发到 doc-service /documents/ingest)
+// 用户上传的文档带 owner_id(私有),只有上传者自己可见
 func (s *Server) uploadDocument(c *GinCompat) {
 	if s.docClient == nil {
 		c.JSON(http.StatusServiceUnavailable, H{"error": "doc-service 未启用"})
 		return
 	}
+	userID := c.GetString("user_id") // 从 JWT 获取,用户上传的文档标记为私有
 	file, err := c.FormFile("file")
 	if err != nil {
 		c.JSON(http.StatusBadRequest, H{"error": "缺少上传文件: " + err.Error()})
@@ -30,25 +32,26 @@ func (s *Server) uploadDocument(c *GinCompat) {
 	}
 	defer src.Close()
 
-	result, err := s.docClient.UploadFile(c.Request().Context(), file.Filename, src)
+	result, err := s.docClient.UploadFile(c.Request().Context(), file.Filename, src, userID)
 	if err != nil {
 		log.Printf("[ERROR][api] 上传文档失败 filename=%s: %v", file.Filename, err)
 		c.JSON(http.StatusBadGateway, H{"error": "doc-service 摄入失败: " + err.Error()})
 		return
 	}
-	log.Printf("[INFO][api] 上传文档成功 filename=%s", file.Filename)
+	log.Printf("[INFO][api] 上传文档成功 filename=%s owner=%s", file.Filename, userID)
 	c.JSON(http.StatusOK, result)
 }
 
-// listDocuments 文档列表(转发 doc-service)
+// listDocuments 文档列表(转发 doc-service,按 user_id 过滤:全局共享+用户私有)
 func (s *Server) listDocuments(c *GinCompat) {
 	if s.docClient == nil {
 		c.JSON(http.StatusServiceUnavailable, H{"error": "doc-service 未启用"})
 		return
 	}
+	userID := c.GetString("user_id")
 	status := c.Query("status")
 	companyCode := c.Query("company_code")
-	docs, err := s.docClient.ListDocuments(c.Request().Context(), status, companyCode)
+	docs, err := s.docClient.ListDocuments(c.Request().Context(), status, companyCode, userID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, H{"error": "查询文档列表失败: " + err.Error()})
 		return
@@ -77,11 +80,13 @@ func (s *Server) deleteDocument(c *GinCompat) {
 }
 
 // scanDocuments 扫描本地目录批量导入(转发 doc-service /documents/scan)
+// 管理员用此接口上传全局共享文档(不带 user_id),普通用户上传则标记为私有
 func (s *Server) scanDocuments(c *GinCompat) {
 	if s.docClient == nil {
 		c.JSON(http.StatusServiceUnavailable, H{"error": "doc-service 未启用"})
 		return
 	}
+	userID := c.GetString("user_id") // 管理员scan时 user_id 可能来自特殊标记,普通用户则带自己的
 	var req struct {
 		DirPath string `json:"dir_path" binding:"required"`
 	}
@@ -89,13 +94,13 @@ func (s *Server) scanDocuments(c *GinCompat) {
 		c.JSON(http.StatusBadRequest, H{"error": "缺少 dir_path: " + err.Error()})
 		return
 	}
-	result, err := s.docClient.Scan(c.Request().Context(), req.DirPath)
+	result, err := s.docClient.Scan(c.Request().Context(), req.DirPath, userID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, H{"error": "扫描导入失败: " + err.Error()})
 		return
 	}
-	log.Printf("[INFO][api] 扫描导入完成 dir=%s total=%d success=%d failed=%d",
-		req.DirPath, result.Total, result.Success, result.Failed)
+	log.Printf("[INFO][api] 扫描导入完成 dir=%s owner=%s total=%d success=%d failed=%d",
+		req.DirPath, userID, result.Total, result.Success, result.Failed)
 	c.JSON(http.StatusOK, result)
 }
 
@@ -105,6 +110,7 @@ func (s *Server) ragDebug(c *GinCompat) {
 		c.JSON(http.StatusServiceUnavailable, H{"error": "doc-service 未启用"})
 		return
 	}
+	userID := c.GetString("user_id")
 	var req struct {
 		Query  string `json:"query" binding:"required"`
 		TopK   int    `json:"top_k"`
@@ -118,7 +124,7 @@ func (s *Server) ragDebug(c *GinCompat) {
 	if topK <= 0 {
 		topK = 5
 	}
-	resp, err := s.docClient.Search(c.Request().Context(), req.Query, topK, req.DocIDs)
+	resp, err := s.docClient.Search(c.Request().Context(), req.Query, topK, req.DocIDs, userID)
 	if err != nil {
 		c.JSON(http.StatusBadGateway, H{"error": "检索失败: " + err.Error()})
 		return

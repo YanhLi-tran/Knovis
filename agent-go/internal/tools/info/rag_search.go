@@ -12,6 +12,8 @@ import (
 
 // ragSearch 调用 doc-service 执行 RAG 检索(企业文档库)
 // 失败时返回错误信息给 LLM,不阻断对话(约束:RAG 检索失败不让对话崩溃)
+// userID 从 ctx 取(OTACO Run 注入),传给 doc-service 做文档权限隔离:
+// 用户只能检索到自己上传的私有文档 + 管理员上传的全局共享文档
 func ragSearch(ctx context.Context, args map[string]any, docClient *rag.DocClient) (string, error) {
 	query, _ := args["query"].(string)
 	if query == "" {
@@ -32,9 +34,12 @@ func ragSearch(ctx context.Context, args map[string]any, docClient *rag.DocClien
 		}
 	}
 
-	resp, err := docClient.Search(ctx, query, topK, docIDs)
+	// 文档权限隔离:从 ctx 取 user_id,只检索该用户可见文档(全局共享 + 用户私有)
+	userID, _ := ctx.Value(tools.CtxKeyUserID).(string)
+
+	resp, err := docClient.Search(ctx, query, topK, docIDs, userID)
 	if err != nil {
-		log.Printf("[WARN][tools] rag_search 检索失败 query=%s err=%v(返回错误信息给 LLM,不阻断对话)", query, err)
+		log.Printf("[WARN][tools] rag_search 检索失败 query=%s owner=%s err=%v(返回错误信息给 LLM,不阻断对话)", query, userID, err)
 		// 不返回 error,返回友好提示给 LLM,避免 OTACO 重试循环
 		return fmt.Sprintf("【文档检索结果】检索失败:%s。可尝试直接回答或用其他工具。", err.Error()), nil
 	}
@@ -43,8 +48,8 @@ func ragSearch(ctx context.Context, args map[string]any, docClient *rag.DocClien
 		return fmt.Sprintf("【文档检索结果】未在文档库中找到与「%s」相关的内容。可尝试用 web_search 联网搜索,或直接回答。", query), nil
 	}
 
-	log.Printf("[INFO][tools] rag_search 成功 query=%s results=%d bm25=%d rag=%d elapsed=%dms",
-		query, len(resp.Results), resp.BM25Count, resp.RAGCount, resp.ElapsedMs)
+	log.Printf("[INFO][tools] rag_search 成功 query=%s owner=%s results=%d bm25=%d rag=%d elapsed=%dms",
+		query, userID, len(resp.Results), resp.BM25Count, resp.RAGCount, resp.ElapsedMs)
 
 	return formatRAGResults(query, resp), nil
 }
