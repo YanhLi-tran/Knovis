@@ -25,6 +25,11 @@ class EmbedderClient:
     def __init__(self, base_url: str = None):
         self.base_url = (base_url or os.getenv("MEMORY_SERVICE_URL", "http://127.0.0.1:8002")).rstrip("/")
         self._client = httpx.Client(timeout=120.0)  # 首次加载模型可能慢
+        self._api_key = os.getenv("MEMORY_SERVICE_API_KEY", "")  # doc-service 用 memory-service 的 key 调用它
+
+    def _headers(self) -> dict:
+        """带 X-API-Key 鉴权头(memory-service 开启鉴权后必需)。"""
+        return {"X-API-Key": self._api_key} if self._api_key else {}
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """批量文本 → 向量(分批,每批 ≤32)."""
@@ -37,6 +42,7 @@ class EmbedderClient:
                 resp = self._client.post(
                     f"{self.base_url}/embed_vectors",
                     json={"texts": batch},
+                    headers=self._headers(),
                 )
                 resp.raise_for_status()
                 data = resp.json()
