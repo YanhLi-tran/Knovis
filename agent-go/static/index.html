@@ -2223,10 +2223,12 @@
                 <div class="form-group">
                     <label class="form-label">启动步骤</label>
                     <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text-secondary);line-height:1.9;">
-                        <li>下载并解压对应你系统的 local-agent 文件</li>
-                        <li>双击运行（Windows 为 <code>.exe</code>），保持窗口常开</li>
-                        <li>回到本页面重新登录（或刷新），登录后会自动激活并绑定当前账号</li>
-                        <li>部署在服务器时需指定：<code>local-agent --server ws://服务器IP:8001</code>（可选 <code>--workdir</code> 指定工作目录）</li>
+                        <li>下载对应你系统的 local-agent 二进制，放到任意目录（建议非系统盘，如 <code>D:\local-agent\</code>）</li>
+                        <li>命令行启动并指定工作区（agent 文件读写限定于此目录，备份快照也存在这里，<strong>建议放非 C 盘</strong>）：<br>
+                            <code style="display:inline-block;margin-top:4px;padding:6px 10px;background:rgba(0,0,0,0.04);border-radius:4px;font-size:11.5px;">local-agent.exe -server ws://服务器IP:8001 -workdir D:\knovis-workspace</code>
+                        </li>
+                        <li>保持窗口常开，回到本页面重新登录（或刷新），登录后自动激活并绑定当前账号</li>
+                        <li>不传 <code>-workdir</code> 时默认用二进制旁的 <code>./workspace</code> 目录</li>
                     </ol>
                 </div>
             </div>

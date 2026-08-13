@@ -63,19 +63,16 @@ CREATE TABLE IF NOT EXISTS `agent_user_config` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户档案';
 
 -- 用户凭证表（SSO 形态：仅存 Knovis token 等，不自管密码）
+-- 注意: id 列即 Knovis user_id（字符串化），与 agent-go User 结构体对齐
 CREATE TABLE IF NOT EXISTS `agent_user_credentials` (
-  `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `user_id` VARCHAR(64) NOT NULL COMMENT '用户ID（Knovis userId）',
-  `llm_api_key_enc` TEXT COMMENT 'AES-256-GCM 加密的 LLM API Key',
-  `llm_base_url` VARCHAR(255) DEFAULT NULL COMMENT 'LLM BaseURL（用户自定义）',
-  `llm_model` VARCHAR(128) DEFAULT NULL COMMENT 'LLM 模型名（用户自定义）',
-  `knovis_token_enc` TEXT COMMENT 'AES-256-GCM 加密的 Knovis token',
-  `using_own_key` BOOLEAN DEFAULT FALSE COMMENT '是否使用自带 key（true=不限流）',
+  `id` VARCHAR(64) NOT NULL PRIMARY KEY COMMENT 'Knovis user_id（字符串化）',
+  `llm_key_encrypted` VARBINARY(512) COMMENT '用户 LLM key 密文（AES-256-GCM）',
+  `llm_key_version` INT DEFAULT 1 COMMENT '加密密钥版本（轮换用）',
+  `knovis_token_encrypted` VARBINARY(512) COMMENT '用户 Knovis token 密文（AES-256-GCM）',
+  `knovis_token_version` INT DEFAULT 1 COMMENT 'Knovis token 加密密钥版本',
+  `rate_quota_per_day` INT DEFAULT 5 COMMENT '免费额度：每天对话次数（自带 key 不限）',
   `created_at` DATETIME(3) DEFAULT NULL COMMENT '创建时间',
-  `updated_at` DATETIME(3) DEFAULT NULL COMMENT '更新时间',
-  `deleted_at` DATETIME(3) DEFAULT NULL COMMENT '软删除时间',
-  UNIQUE INDEX `idx_agent_user_credentials_user_id` (`user_id`),
-  INDEX `idx_agent_user_credentials_deleted_at` (`deleted_at`)
+  `updated_at` DATETIME(3) DEFAULT NULL COMMENT '更新时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='用户凭证（SSO 形态）';
 
 -- 项目表（顶层 session，项目下可创建子 session）
