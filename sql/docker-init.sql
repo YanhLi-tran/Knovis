@@ -94,20 +94,28 @@ CREATE TABLE IF NOT EXISTS `agent_projects` (
   INDEX `idx_agent_projects_deleted_at` (`deleted_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='项目';
 
--- 文档表（PDF 元信息）
+-- 文档表（PDF 元信息，owner_id 实现文档权限隔离：NULL=全局共享，非空=用户私有）
 CREATE TABLE IF NOT EXISTS `agent_documents` (
   `id` INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
-  `doc_name` VARCHAR(500) NOT NULL COMMENT '文档名称',
-  `doc_type` VARCHAR(20) DEFAULT 'pdf' COMMENT '文档类型',
+  `filename` VARCHAR(500) NOT NULL COMMENT '文档文件名',
+  `file_path` VARCHAR(1000) DEFAULT NULL COMMENT '服务器存储路径',
+  `file_size` BIGINT DEFAULT 0 COMMENT '文件大小(字节)',
   `total_pages` INT DEFAULT 0 COMMENT '总页数',
   `total_chunks` INT DEFAULT 0 COMMENT '总分块数',
-  `status` VARCHAR(20) DEFAULT 'pending' COMMENT '处理状态',
-  `meta` TEXT COMMENT '元信息JSON',
+  `status` VARCHAR(20) DEFAULT 'pending' COMMENT '处理状态(processing/ready/error)',
+  `company_code` VARCHAR(20) DEFAULT '' COMMENT '公司代码(自动解析)',
+  `company_name` VARCHAR(200) DEFAULT '' COMMENT '公司名称',
+  `report_year` INT DEFAULT 0 COMMENT '报告年份',
+  `report_type` VARCHAR(50) DEFAULT '年报' COMMENT '报告类型',
+  `error_msg` TEXT COMMENT '错误信息',
+  `manual_meta` TEXT COMMENT '手动指定元信息JSON',
+  `owner_id` VARCHAR(64) DEFAULT NULL COMMENT '所有者用户ID（NULL=全局共享，非空=用户私有）',
   `created_at` DATETIME(3) DEFAULT NULL COMMENT '创建时间',
   `updated_at` DATETIME(3) DEFAULT NULL COMMENT '更新时间',
   `deleted_at` DATETIME(3) DEFAULT NULL COMMENT '软删除时间',
   INDEX `idx_agent_documents_status` (`status`),
-  INDEX `idx_agent_documents_deleted_at` (`deleted_at`)
+  INDEX `idx_agent_documents_deleted_at` (`deleted_at`),
+  INDEX `idx_agent_documents_owner_id` (`owner_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='文档元信息';
 
 -- 文档分块表（BM25 全文检索 + 段落召回）
