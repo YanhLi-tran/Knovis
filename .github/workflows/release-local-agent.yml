@@ -56,6 +56,18 @@ jobs:
             -o "../dist/${OUT}" .
           cd ..
           echo "dist/${OUT}  ($(du -h "dist/${OUT}" | cut -f1))"
+          # Windows 打 zip、Linux/mac 打 tar.gz:浏览器对压缩包下载不拦截,
+          # 直接下 exe 会被 Edge/Chrome 的 MotW 机制拦截("无法下载")
+          cd dist
+          if [ "$GOOS" = "windows" ]; then
+            zip "${OUT%.exe}.zip" "$OUT"
+            rm "$OUT"
+          else
+            tar czf "${OUT}.tar.gz" "$OUT"
+            rm "$OUT"
+          fi
+          cd ..
+          ls -lh dist/
 
       - uses: actions/upload-artifact@v4
         with:
@@ -88,13 +100,13 @@ jobs:
             ### 下载对应平台
             | 平台 | 文件 |
             | --- | --- |
-            | Windows 10/11 (x64) | `local-agent-windows-amd64-*.exe` |
-            | Linux (x64) | `local-agent-linux-amd64-*` |
-            | macOS (Intel) | `local-agent-darwin-amd64-*` |
-            | macOS (Apple Silicon) | `local-agent-darwin-arm64-*` |
+            | Windows 10/11 (x64) | `local-agent-windows-amd64-*.zip` |
+            | Linux (x64) | `local-agent-linux-amd64-*.tar.gz` |
+            | macOS (Intel) | `local-agent-darwin-amd64-*.tar.gz` |
+            | macOS (Apple Silicon) | `local-agent-darwin-arm64-*.tar.gz` |
 
             ### 启动方式
-            1. 下载对应你系统的二进制，放到任意目录（Windows 建议非系统盘，如 `D:\local-agent\`）
+            1. 下载对应平台的压缩包，解压到任意目录（Windows 建议非系统盘，如 `D:\local-agent\`）
             2. 命令行启动（工作区建议放非 C 盘，agent 文件读写和备份快照都存在这里）：
                - Windows: `local-agent.exe -server ws://<服务器IP>:8001 -workdir D:\knovis-workspace`
                - macOS/Linux: `./local-agent -server ws://<服务器IP>:8001 -workdir ~/knovis-workspace`
@@ -102,6 +114,6 @@ jobs:
             4. 不传 `-workdir` 时默认用二进制旁的 `./workspace` 目录
 
             ### Windows SmartScreen 提示
-            Windows 下载未签名 exe 时会弹出"Windows 已保护你的电脑"。本程序开源(见源码 `local-agent/`)，可放心运行：
+            解压后首次运行 `local-agent.exe` 会弹"Windows 已保护你的电脑"(未签名 exe 标准拦截)。本程序开源(见源码 `local-agent/`)，可放心运行：
             点击 **更多信息** → **仍要运行** 即可。
           files: dist/local-agent-*
