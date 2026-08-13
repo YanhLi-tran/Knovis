@@ -46,25 +46,28 @@ jobs:
           GOARCH="${TARGET#*-}"
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-          OUT="local-agent-${TARGET}-v${{ steps.version.outputs.tag }}${EXT}"
+          # 压缩包内二进制用简短名 local-agent[.exe]（用户友好，双击/执行方便）
+          BIN_NAME="local-agent${EXT}"
+          # 压缩包名带平台+版本（便于用户区分下载哪个）
+          PKG_NAME="local-agent-${TARGET}-v${{ steps.version.outputs.tag }}"
           mkdir -p dist
           # local-agent 是独立 module(自带 go.mod),必须 cd 进去再 build,
           # 不能从仓库根用 `go build ./local-agent`(根 module knovis 看不到子 module)
           cd local-agent
           CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
             -ldflags "-s -w -X main.clientVersion=v${{ steps.version.outputs.tag }}" \
-            -o "../dist/${OUT}" .
+            -o "../dist/${BIN_NAME}" .
           cd ..
-          echo "dist/${OUT}  ($(du -h "dist/${OUT}" | cut -f1))"
+          echo "dist/${BIN_NAME}  ($(du -h "dist/${BIN_NAME}" | cut -f1))"
           # Windows 打 zip、Linux/mac 打 tar.gz:浏览器对压缩包下载不拦截,
           # 直接下 exe 会被 Edge/Chrome 的 MotW 机制拦截("无法下载")
           cd dist
           if [ "$GOOS" = "windows" ]; then
-            zip "${OUT%.exe}.zip" "$OUT"
-            rm "$OUT"
+            zip "${PKG_NAME}.zip" "$BIN_NAME"
+            rm "$BIN_NAME"
           else
-            tar czf "${OUT}.tar.gz" "$OUT"
-            rm "$OUT"
+            tar czf "${PKG_NAME}.tar.gz" "$BIN_NAME"
+            rm "$BIN_NAME"
           fi
           cd ..
           ls -lh dist/
@@ -107,11 +110,11 @@ jobs:
 
             ### 启动方式
             1. 下载对应平台的压缩包，解压到任意目录（Windows 建议非系统盘，如 `D:\local-agent\`）
-            2. 命令行启动（工作区建议放非 C 盘，agent 文件读写和备份快照都存在这里）：
-               - Windows: `local-agent.exe -server ws://<服务器IP>:8001 -workdir D:\knovis-workspace`
-               - macOS/Linux: `./local-agent -server ws://<服务器IP>:8001 -workdir ~/knovis-workspace`
+            2. 双击运行 `local-agent`（Windows 为 `local-agent.exe`）
+               - 首次运行会提示输入服务器地址（格式 `ws://<公网IP>:<端口>`），输入后自动保存到同目录 `config.json`，下次双击直接用
+               - 也可用命令行指定: `local-agent.exe -server ws://<服务器IP>:<端口> -workdir D:\knovis-workspace`
             3. 保持窗口常开，登录 Knovis 前端，登录成功后自动激活并绑定当前账号
-            4. 不传 `-workdir` 时默认用二进制旁的 `./workspace` 目录
+            4. 工作目录默认用二进制旁的 `./workspace`，可在 `config.json` 里配置 `workdir` 字段改到非 C 盘
 
             ### Windows SmartScreen 提示
             解压后首次运行 `local-agent.exe` 会弹"Windows 已保护你的电脑"(未签名 exe 标准拦截)。本程序开源(见源码 `local-agent/`)，可放心运行：

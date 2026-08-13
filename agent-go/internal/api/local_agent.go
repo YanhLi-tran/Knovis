@@ -4,7 +4,7 @@ import "net/http"
 
 // localAgentVersion local-agent 当前发布版本（与 local-agent 内部 clientVersion 对齐）
 // 每次 local-agent 发版时更新
-const localAgentVersion = "v0.1.2"
+const localAgentVersion = "v0.1.3"
 
 // getLocalAgentInfo GET /agent/local/info
 // 返回 local-agent 下载与启动引导信息（供前端"本地 Agent"引导弹窗使用）

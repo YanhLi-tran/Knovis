@@ -2224,11 +2224,9 @@
                     <label class="form-label">启动步骤</label>
                     <ol style="margin:0;padding-left:18px;font-size:12.5px;color:var(--text-secondary);line-height:1.9;">
                         <li>下载对应平台的压缩包（Windows 为 <code>.zip</code>，macOS/Linux 为 <code>.tar.gz</code>），解压到任意目录（建议非系统盘，如 <code>D:\local-agent\</code>）</li>
-                        <li>命令行启动并指定工作区（agent 文件读写限定于此目录，备份快照也存在这里，<strong>建议放非 C 盘</strong>）：<br>
-                            <code style="display:inline-block;margin-top:4px;padding:6px 10px;background:rgba(0,0,0,0.04);border-radius:4px;font-size:11.5px;">local-agent.exe -server ws://服务器IP:8001 -workdir D:\knovis-workspace</code>
-                        </li>
+                        <li>双击运行 <code>local-agent.exe</code>，首次运行会提示输入服务器地址（格式 <code>ws://公网IP:端口</code>，如 <code>ws://219.146.211.42:20169</code>），输入后自动保存，下次双击直接用</li>
                         <li>保持窗口常开，回到本页面重新登录（或刷新），登录后自动激活并绑定当前账号</li>
-                        <li>不传 <code>-workdir</code> 时默认用二进制旁的 <code>./workspace</code> 目录</li>
+                        <li>工作目录默认在二进制旁的 <code>./workspace</code>，可在同目录 <code>config.json</code> 里改 <code>workdir</code> 字段</li>
                     </ol>
                     <div style="margin-top:10px;padding:8px 10px;border-radius:6px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.25);font-size:11.5px;color:var(--text-secondary);">
                         ⚠️ Windows 解压后首次运行 <code>.exe</code> 可能弹"已保护你的电脑"(未签名)，点 <strong>更多信息</strong> → <strong>仍要运行</strong> 即可。本程序开源，源码见仓库 <code>local-agent/</code>。

@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bufio"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,11 +20,12 @@ import (
 
 const (
 	localCtrlAddr = "127.0.0.1:17000" // 本地控制服务地址（前端登录后激活用，仅本机可访问）
+	configFile    = "config.json"     // 本地配置文件名（存服务器地址等，双击运行时读取）
 )
 
 // clientVersion local-agent 版本号
 // 发布时可用 -ldflags "-X main.clientVersion=vX.Y.Z" 注入（GitHub Actions 按 tag 自动注入）
-var clientVersion = "0.1.2"
+var clientVersion = "0.1.3"
 
 // 全局状态（本地控制服务与 WS 连接循环共享）
 // token 采用「登录时由前端推送激活」模式：local-agent 常驻，userID 始终跟随当前登录用户
@@ -33,6 +37,67 @@ var (
 	connected atomic.Bool
 	serverURL string
 )
+
+// localConfig 本地配置（首次双击运行时引导用户填写，保存到 exe 旁的 config.json）
+// 解决"双击运行用默认 127.0.0.1 连不上"问题：用户填一次服务器地址，后续双击自动读取
+type localConfig struct {
+	Server  string `json:"server"`  // 中央服务器 WebSocket 地址（如 ws://219.146.211.42:20169）
+	WorkDir string `json:"workdir"` // agent 工作目录（空=用 exe 旁的 ./workspace）
+}
+
+// configPath 返回配置文件绝对路径（exe 旁的 config.json）
+func configPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return configFile
+	}
+	return filepath.Join(filepath.Dir(exe), configFile)
+}
+
+// loadConfig 读取本地配置，不存在返回零值
+func loadConfig() localConfig {
+	var cfg localConfig
+	data, err := os.ReadFile(configPath())
+	if err != nil {
+		return cfg
+	}
+	_ = json.Unmarshal(data, &cfg)
+	return cfg
+}
+
+// saveConfig 写入本地配置（双击运行首次配置后保存，后续启动免填）
+func saveConfig(cfg localConfig) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath(), data, 0o644)
+}
+
+// promptConfig 双击运行（无命令行参数）且无配置文件时，交互式引导用户填写服务器地址
+// 填完后保存到 config.json，下次双击直接用，不再询问
+func promptConfig() localConfig {
+	reader := bufio.NewReader(os.Stdin)
+	fmt.Println("============================================")
+	fmt.Println("  local-agent 首次配置")
+	fmt.Println("============================================")
+	fmt.Println()
+	fmt.Println("请输入 Knovis 服务器地址（agent-go 的 WebSocket 地址）")
+	fmt.Println("格式: ws://<公网IP>:<端口>  例如: ws://219.146.211.42:20169")
+	fmt.Println("（端口在并行智算云控制台的端口映射里查，是 8001 映射后的公网端口）")
+	fmt.Print("> ")
+	server, _ := reader.ReadString('\n')
+	server = strings.TrimSpace(server)
+
+	cfg := localConfig{Server: server}
+	if err := saveConfig(cfg); err != nil {
+		log.Printf("[WARN] 配置保存失败(下次仍需输入): %v", err)
+	} else {
+		log.Printf("[INFO] 配置已保存到 %s，下次双击运行自动读取", configPath())
+	}
+	fmt.Println()
+	return cfg
+}
 
 func setToken(t string) {
 	tokenMu.Lock()
@@ -75,7 +140,7 @@ func (s *session) writeJSON(msg clientMessage) error {
 }
 
 func main() {
-	flagServer := flag.String("server", "ws://127.0.0.1:8001", "中央服务器 WebSocket 地址（如 ws://127.0.0.1:8001）")
+	flagServer := flag.String("server", "", "中央服务器 WebSocket 地址（如 ws://219.146.211.42:20169）。留空则读 config.json，都没有则交互式输入")
 	flagToken := flag.String("token", "", "JWT access token（可选；也可用 AGENT_TOKEN 环境变量，或由前端登录后自动激活）")
 	flagWorkDir := flag.String("workdir", "", "agent 文件操作工作目录（默认 ./workspace；可用 AGENT_WORK_DIR 环境变量覆盖）")
 	showVersion := flag.Bool("version", false, "打印版本号并退出")
@@ -86,19 +151,37 @@ func main() {
 		return
 	}
 
+	// 服务器地址解析优先级: 命令行 -server > 环境变量 AGENT_SERVER > config.json > 交互式输入(首次双击)
+	cfg := loadConfig()
 	serverURL = *flagServer
+	if serverURL == "" {
+		serverURL = os.Getenv("AGENT_SERVER")
+	}
+	if serverURL == "" {
+		serverURL = cfg.Server
+	}
+	if serverURL == "" {
+		// 双击运行且无配置：交互式引导填写服务器地址，保存到 config.json
+		cfg = promptConfig()
+		serverURL = cfg.Server
+	}
+
 	if *flagToken == "" {
 		*flagToken = os.Getenv("AGENT_TOKEN")
 	}
 	setToken(*flagToken)
 
-	// 初始化 agent 工作目录（沙箱根，与 local-agent 目录分离）
+	// 工作目录解析优先级: 命令行 -workdir > 环境变量 AGENT_WORK_DIR > config.json > 默认 ./workspace
 	if *flagWorkDir == "" {
 		*flagWorkDir = os.Getenv("AGENT_WORK_DIR")
+	}
+	if *flagWorkDir == "" {
+		*flagWorkDir = cfg.WorkDir
 	}
 	initWorkDir(*flagWorkDir)
 
 	log.Printf("[INFO] local-agent 启动 version=%s platform=%s", clientVersion, runtime.GOOS)
+	log.Printf("[INFO] 服务器: %s", serverURL)
 	log.Printf("[INFO] 本地控制服务: http://%s（前端登录后自动激活，绑定当前用户）", localCtrlAddr)
 
 	// 本地控制 HTTP 服务（goroutine，供前端登录/注册成功后激活 token）
@@ -248,12 +331,17 @@ func startLocalCtrl() {
 	}
 }
 
-// withCORS 允许前端(不同端口)跨域调用本地控制服务
+// withCORS 允许前端(公网网页)跨域调用本地控制服务(127.0.0.1:17000)
+// 关键: Chrome/Edge 的 Private Network Access 规则要求本地服务在 OPTIONS 预检响应里
+// 显式返回 Access-Control-Allow-Private-Network: true, 否则公网页面 fetch 127.0.0.1 会被拦截,
+// 导致前端登录后无法把 token 推给 local-agent(local-agent 一直卡在"等待 token 激活")
 func withCORS(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		// Private Network Access: 允许公网页面访问本机服务(127.0.0.1)
+		w.Header().Set("Access-Control-Allow-Private-Network", "true")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
