@@ -110,11 +110,9 @@ jobs:
 
             ### 启动方式
             1. 下载对应平台的压缩包，解压到任意目录（Windows 建议非系统盘，如 `D:\local-agent\`）
-            2. 双击运行 `local-agent`（Windows 为 `local-agent.exe`）
-               - 首次运行会提示输入服务器地址（格式 `ws://<公网IP>:<端口>`），输入后自动保存到同目录 `config.json`，下次双击直接用
-               - 也可用命令行指定: `local-agent.exe -server ws://<服务器IP>:<端口> -workdir D:\knovis-workspace`
+            2. 双击运行 `local-agent`（Windows 为 `local-agent.exe`，服务器地址已内置，无需配置）
             3. 保持窗口常开，登录 Knovis 前端，登录成功后自动激活并绑定当前账号
-            4. 工作目录默认用二进制旁的 `./workspace`，可在 `config.json` 里配置 `workdir` 字段改到非 C 盘
+            4. 工作目录默认用二进制旁的 `./workspace`；如需换服务器，用命令行 `-server ws://新地址` 或编辑同目录 `config.json`
 
             ### Windows SmartScreen 提示
             解压后首次运行 `local-agent.exe` 会弹"Windows 已保护你的电脑"(未签名 exe 标准拦截)。本程序开源(见源码 `local-agent/`)，可放心运行：

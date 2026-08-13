@@ -25,7 +25,7 @@ const (
 
 // clientVersion local-agent 版本号
 // 发布时可用 -ldflags "-X main.clientVersion=vX.Y.Z" 注入（GitHub Actions 按 tag 自动注入）
-var clientVersion = "0.1.3"
+var clientVersion = "0.1.4"
 
 // 全局状态（本地控制服务与 WS 连接循环共享）
 // token 采用「登录时由前端推送激活」模式：local-agent 常驻，userID 始终跟随当前登录用户
@@ -140,7 +140,8 @@ func (s *session) writeJSON(msg clientMessage) error {
 }
 
 func main() {
-	flagServer := flag.String("server", "", "中央服务器 WebSocket 地址（如 ws://219.146.211.42:20169）。留空则读 config.json，都没有则交互式输入")
+	// 默认服务器地址内置(双击运行无需输入)，换服务器时用 -server 参数或 config.json 覆盖
+	flagServer := flag.String("server", "ws://219.146.211.42:20169", "中央服务器 WebSocket 地址（默认内置 Knovis 服务器；换服务器时用此参数或 config.json 覆盖）")
 	flagToken := flag.String("token", "", "JWT access token（可选；也可用 AGENT_TOKEN 环境变量，或由前端登录后自动激活）")
 	flagWorkDir := flag.String("workdir", "", "agent 文件操作工作目录（默认 ./workspace；可用 AGENT_WORK_DIR 环境变量覆盖）")
 	showVersion := flag.Bool("version", false, "打印版本号并退出")
@@ -151,19 +152,17 @@ func main() {
 		return
 	}
 
-	// 服务器地址解析优先级: 命令行 -server > 环境变量 AGENT_SERVER > config.json > 交互式输入(首次双击)
+	// 服务器地址解析优先级: 命令行 -server > 环境变量 AGENT_SERVER > config.json > 内置默认值
+	// 双击运行(无参数)时用内置默认值,用户无需输入即可连上 Knovis 服务器
 	cfg := loadConfig()
 	serverURL = *flagServer
-	if serverURL == "" {
-		serverURL = os.Getenv("AGENT_SERVER")
-	}
-	if serverURL == "" {
-		serverURL = cfg.Server
-	}
-	if serverURL == "" {
-		// 双击运行且无配置：交互式引导填写服务器地址，保存到 config.json
-		cfg = promptConfig()
-		serverURL = cfg.Server
+	if serverURL == "ws://219.146.211.42:20169" {
+		// 用的是内置默认值,检查是否有更高优先级的配置覆盖
+		if env := os.Getenv("AGENT_SERVER"); env != "" {
+			serverURL = env
+		} else if cfg.Server != "" {
+			serverURL = cfg.Server
+		}
 	}
 
 	if *flagToken == "" {
