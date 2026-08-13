@@ -47,15 +47,20 @@ jobs:
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
           OUT="local-agent-${TARGET}-v${{ steps.version.outputs.tag }}${EXT}"
+          mkdir -p dist
+          # local-agent 是独立 module(自带 go.mod),必须 cd 进去再 build,
+          # 不能从仓库根用 `go build ./local-agent`(根 module knovis 看不到子 module)
+          cd local-agent
           CGO_ENABLED=0 GOOS="$GOOS" GOARCH="$GOARCH" go build -trimpath \
             -ldflags "-s -w -X main.clientVersion=v${{ steps.version.outputs.tag }}" \
-            -o "dist/${OUT}" ./local-agent
+            -o "../dist/${OUT}" .
+          cd ..
           echo "dist/${OUT}  ($(du -h "dist/${OUT}" | cut -f1))"
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: dist/${{ matrix.target }}-*
+          path: dist/local-agent-${{ matrix.target }}-*
 
   release:
     name: create-release
@@ -89,9 +94,10 @@ jobs:
             | macOS (Apple Silicon) | `local-agent-darwin-arm64-*` |
 
             ### 启动方式
-            1. 解压后运行 `local-agent`（Windows 双击 exe，或命令行执行）
-            2. 登录 Knovis 前端（服务器地址），登录成功后前端会自动激活本机 local-agent
-            3. 可选参数：
-               - `--server ws://<服务器IP>:8001` 指定服务器（默认 ws://127.0.0.1:8001）
-               - `--workdir <目录>` 指定 agent 文件操作工作区（默认 ./workspace）
+            1. 下载对应你系统的二进制，放到任意目录（Windows 建议非系统盘，如 `D:\local-agent\`）
+            2. 命令行启动（工作区建议放非 C 盘，agent 文件读写和备份快照都存在这里）：
+               - Windows: `local-agent.exe -server ws://<服务器IP>:8001 -workdir D:\knovis-workspace`
+               - macOS/Linux: `./local-agent -server ws://<服务器IP>:8001 -workdir ~/knovis-workspace`
+            3. 保持窗口常开，登录 Knovis 前端，登录成功后自动激活并绑定当前账号
+            4. 不传 `-workdir` 时默认用二进制旁的 `./workspace` 目录
           files: dist/local-agent-*
