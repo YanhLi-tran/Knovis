@@ -1481,10 +1481,8 @@
         /* === RAG 文档管理 === */
         .docs-toolbar { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; align-items: center; }
         .docs-toolbar .docs-count { margin-left: auto; font-size: 12px; color: var(--text-muted); }
-        .docs-upload-btn, .docs-scan-btn { position: relative; overflow: hidden; }
+        .docs-upload-btn { position: relative; overflow: hidden; }
         .docs-upload-btn input[type=file] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-        .docs-scan-input { flex: 1; min-width: 180px; padding: 9px 12px; border: 1.5px solid rgba(199, 210, 254, 0.5); border-radius: var(--radius-sm); background: rgba(255, 255, 255, 0.7); color: var(--text); font-size: 12.5px; outline: none; transition: all var(--transition); }
-        .docs-scan-input:focus { border-color: var(--primary-light); box-shadow: var(--glow-primary); background: rgba(255, 255, 255, 0.95); }
         .docs-list { display: flex; flex-direction: column; gap: 8px; max-height: 48vh; overflow-y: auto; padding-right: 4px; }
         .docs-list::-webkit-scrollbar { width: 6px; }
         .docs-list::-webkit-scrollbar-thumb { background: rgba(99, 102, 241, 0.2); border-radius: 3px; }
@@ -2062,7 +2060,7 @@
                 <div class="modal-icon">📄</div>
                 <div class="modal-titles">
                     <h3>RAG 文档管理</h3>
-                    <div class="modal-sub">上传年报 PDF · 扫描本地目录导入 · 全局共享文档库</div>
+                    <div class="modal-sub">上传 PDF 文档（仅自己可见）· 全局共享文档库</div>
                 </div>
                 <button class="modal-close" data-close-modal="docsModal">×</button>
             </div>
@@ -2072,8 +2070,6 @@
                         ⬆ 上传 PDF
                         <input type="file" id="docsFileInput" accept=".pdf" />
                     </button>
-                    <input type="text" class="docs-scan-input" id="docsScanInput" placeholder="本地 PDF 目录路径，如 ./raw_pdf" />
-                    <button class="btn btn-secondary docs-scan-btn" id="docsScanBtn">📂 扫描导入</button>
                     <span class="docs-count" id="docsCount"></span>
                 </div>
                 <div class="docs-list" id="docsList">
@@ -4100,7 +4096,7 @@ async function uploadDocument(file) {
     try {
         const resp = await apiFetch('/documents/upload', { method: 'POST', body: fd });
         if (!resp.ok) throw new Error(await readApiError(resp));
-        toast('success', '上传成功', file.name + ' 已导入');
+        toast('success', '上传成功', file.name + ' 已导入（仅自己可见）');
         loadDocuments();
     } catch (e) { toast('error', '上传失败', e.message); }
 }
@@ -4114,19 +4110,6 @@ async function deleteDocument(id) {
         toast('success', '已删除', '文档及关联数据已清除');
         loadDocuments();
     } catch (e) { toast('error', '删除失败', e.message); }
-}
-
-async function scanDocuments() {
-    const dir = $('docsScanInput').value.trim();
-    if (!dir) { toast('warning', '请输入', '目录路径不能为空'); return; }
-    toast('info', '扫描中', dir);
-    try {
-        const resp = await apiFetch('/documents/scan', { method: 'POST', body: JSON.stringify({ dir_path: dir }) });
-        if (!resp.ok) throw new Error(await readApiError(resp));
-        const data = await resp.json();
-        toast('success', '导入完成', '成功 ' + (data.success || 0) + '/' + (data.total || 0));
-        loadDocuments();
-    } catch (e) { toast('error', '扫描失败', e.message); }
 }
 
 /* ========================================================================
@@ -4702,7 +4685,6 @@ function bindEvents() {
     $('docsRefresh').onclick = loadDocuments;
     $('docsClose').onclick = () => closeModal('docsModal');
     $('docsFileInput').onchange = (e) => { if (e.target.files[0]) uploadDocument(e.target.files[0]); };
-    $('docsScanBtn').onclick = scanDocuments;
 
     $('ragDebugSearchBtn').onclick = runRagDebug;
     $('ragDebugInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') runRagDebug(); });
