@@ -237,10 +237,11 @@ def health():
 
 # ==================== 文档摄入 ====================
 
-def _ingest_pdf(pdf_path: str, filename: str, manual_meta: Optional[dict] = None) -> dict:
+def _ingest_pdf(pdf_path: str, filename: str, manual_meta: Optional[dict] = None, owner_id: str = "") -> dict:
     """单个 PDF 摄入全流程(供 ingest / scan 复用).
 
     流程:解析元数据 → 写文档记录(processing)→ PDF 分块 → 写 chunks → embed → upsert Chroma → 标记 ready
+    owner_id: 空=全局共享(管理员上传), 非空=用户私有
     """
     from parser import parse_filename, parse_pdf
     from store import (
@@ -275,6 +276,7 @@ def _ingest_pdf(pdf_path: str, filename: str, manual_meta: Optional[dict] = None
         report_year=report_year,
         report_type=report_type,
         manual_meta_json=manual_meta,
+        owner_id=owner_id,
     )
 
     try:
@@ -328,10 +330,12 @@ def _ingest_pdf(pdf_path: str, filename: str, manual_meta: Optional[dict] = None
 
 
 @app.post("/documents/ingest")
-async def ingest(file: UploadFile = File(...)):
-    """上传单个 PDF 摄入."""
+async def ingest(file: UploadFile = File(...), request: Request = None):
+    """上传单个 PDF 摄入. owner_id 从 X-Owner-Id header 传入(空=全局共享)."""
     if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="仅支持 PDF 文件")
+
+    owner_id = request.headers.get("X-Owner-Id", "") if request else ""
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)
     save_path = os.path.join(UPLOAD_DIR, file.filename)
@@ -339,17 +343,19 @@ async def ingest(file: UploadFile = File(...)):
         shutil.copyfileobj(file.file, f)
 
     try:
-        return _ingest_pdf(save_path, file.filename)
+        return _ingest_pdf(save_path, file.filename, owner_id=owner_id)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"摄入失败: {e}")
 
 
 @app.post("/documents/scan")
-def scan(req: ScanRequest):
-    """扫描本地目录批量导入所有 PDF."""
+def scan(req: ScanRequest, request: Request):
+    """扫描本地目录批量导入所有 PDF. owner_id 从 X-Owner-Id header 传入(空=全局共享)."""
     dir_path = req.dir_path
     if not os.path.isdir(dir_path):
         raise HTTPException(status_code=400, detail=f"目录不存在: {dir_path}")
+
+    owner_id = request.headers.get("X-Owner-Id", "")
 
     pdf_files = sorted(
         [f for f in os.listdir(dir_path) if f.lower().endswith(".pdf")]
@@ -366,7 +372,7 @@ def scan(req: ScanRequest):
         dst = os.path.join(UPLOAD_DIR, fname)
         try:
             shutil.copy2(src, dst)
-            info = _ingest_pdf(dst, fname)
+            info = _ingest_pdf(dst, fname, owner_id=owner_id)
             results.append({**info, "error": None})
             success += 1
         except Exception as e:
@@ -381,12 +387,14 @@ def scan(req: ScanRequest):
 
 @app.get("/documents")
 def list_docs(
+    request: Request,
     status: str = Query(default=""),
     company_code: str = Query(default=""),
 ):
-    """文档列表(支持过滤)."""
+    """文档列表(支持过滤). owner_id 从 X-Owner-Id header 传入,只返回全局共享+该用户私有."""
     from store import list_documents
-    return {"documents": list_documents(status=status, company_code=company_code)}
+    owner_id = request.headers.get("X-Owner-Id", "")
+    return {"documents": list_documents(status=status, company_code=company_code, owner_id=owner_id)}
 
 
 @app.get("/documents/{doc_id}")
@@ -417,9 +425,10 @@ def rag_search(req: RAGSearchRequest, request: Request):
 
     流程:query 向量化 → BM25(chunks FULLTEXT) top-20 + RAG(Chroma) top-20
          → 归一化 3:7 融合 → [可选 rerank] → 段落召回(扩展到最小标题小节)
+    owner_id 从 X-Owner-Id header 传入,只检索全局共享+该用户私有的文档
     """
     from embedder_client import get_client
-    from store import bm25_search, rag_search as store_rag, hybrid_fuse, section_recall
+    from store import bm25_search, rag_search as store_rag, hybrid_fuse, section_recall, get_visible_doc_ids
     from reranker import get_reranker
 
     # 接收 trace_id 用于跨服务追踪(agent-go 透传)
@@ -430,7 +439,27 @@ def rag_search(req: RAGSearchRequest, request: Request):
         raise HTTPException(status_code=400, detail="query 不能为空")
 
     top_k = req.top_k if req.top_k > 0 else 5
-    doc_ids = req.doc_ids
+
+    # 文档权限隔离:只检索用户可见的文档(全局共享 + 用户私有)
+    owner_id = request.headers.get("X-Owner-Id", "")
+    visible_doc_ids = get_visible_doc_ids(owner_id)
+    if not visible_doc_ids:
+        # 没有任何可见文档,直接返回空
+        return RAGSearchResponse(
+            results=[],
+            query=req.query,
+            top_k=top_k,
+            bm25_count=0,
+            rag_count=0,
+            fused_count=0,
+            reranked=False,
+            elapsed_ms=0,
+        )
+    # 如果请求带了 doc_ids,取交集(用户只能检索可见文档中指定的)
+    if req.doc_ids:
+        doc_ids = list(set(req.doc_ids) & set(visible_doc_ids))
+    else:
+        doc_ids = visible_doc_ids
 
     # 1) query 向量(复用 memory-service bge-large-zh)
     t0 = time.perf_counter()

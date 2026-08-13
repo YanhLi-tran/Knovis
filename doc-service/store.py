@@ -183,11 +183,11 @@ def get_document(doc_id: int) -> Optional[Dict[str, Any]]:
         return None
 
 
-def list_documents(status: str = "", company_code: str = "") -> List[Dict[str, Any]]:
-    """文档列表(支持过滤)."""
+def list_documents(status: str = "", company_code: str = "", owner_id: str = "") -> List[Dict[str, Any]]:
+    """文档列表(支持过滤). owner_id 非空时只返回全局共享+该用户私有文档."""
     sql = (
         "SELECT id, filename, file_size, total_pages, total_chunks, status, "
-        "company_code, company_name, report_year, report_type, error_msg, created_at "
+        "company_code, company_name, report_year, report_type, error_msg, created_at, owner_id "
         "FROM agent_documents WHERE deleted_at IS NULL"
     )
     args: List[Any] = []
@@ -197,6 +197,10 @@ def list_documents(status: str = "", company_code: str = "") -> List[Dict[str, A
     if company_code:
         sql += " AND company_code = %s"
         args.append(company_code)
+    if owner_id:
+        # 全局共享(owner_id IS NULL) + 用户私有(owner_id = ?)
+        sql += " AND (owner_id IS NULL OR owner_id = %s)"
+        args.append(owner_id)
     sql += " ORDER BY created_at DESC"
     try:
         conn = _mysql_conn()
@@ -208,6 +212,26 @@ def list_documents(status: str = "", company_code: str = "") -> List[Dict[str, A
             conn.close()
     except Exception as e:
         logger.error("查询文档列表失败: %s", e)
+        return []
+
+
+def get_visible_doc_ids(owner_id: str) -> List[int]:
+    """查询用户可见的文档ID列表(全局共享 + 该用户私有),用于检索时 doc_ids 过滤."""
+    sql = "SELECT id FROM agent_documents WHERE deleted_at IS NULL AND status = 'ready'"
+    args: List[Any] = []
+    if owner_id:
+        sql += " AND (owner_id IS NULL OR owner_id = %s)"
+        args.append(owner_id)
+    try:
+        conn = _mysql_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(sql, args)
+                return [int(r["id"]) for r in cur.fetchall()]
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error("查询可见文档ID失败 owner=%s: %s", owner_id, e)
         return []
 
 
@@ -235,15 +259,18 @@ def insert_document(
     report_year: int = 0,
     report_type: str = "年报",
     manual_meta_json: Optional[dict] = None,
+    owner_id: str = "",
 ) -> int:
-    """写入文档元信息记录(status=processing),返回 doc_id."""
+    """写入文档元信息记录(status=processing),返回 doc_id. owner_id 空=全局共享."""
     import json as _json
 
     manual_meta_str = _json.dumps(manual_meta_json, ensure_ascii=False) if manual_meta_json else None
+    # owner_id 空字符串转 None(MySQL 存 NULL=全局共享)
+    owner = owner_id if owner_id else None
     sql = (
         "INSERT INTO agent_documents "
-        "(filename, file_path, file_size, status, company_code, company_name, report_year, report_type, manual_meta) "
-        "VALUES (%s, %s, %s, 'processing', %s, %s, %s, %s, %s)"
+        "(filename, file_path, file_size, status, company_code, company_name, report_year, report_type, manual_meta, owner_id) "
+        "VALUES (%s, %s, %s, 'processing', %s, %s, %s, %s, %s, %s)"
     )
     try:
         conn = _mysql_conn()
@@ -251,7 +278,7 @@ def insert_document(
             with conn.cursor() as cur:
                 cur.execute(
                     sql,
-                    (filename, file_path, file_size, company_code, company_name, report_year, report_type, manual_meta_str),
+                    (filename, file_path, file_size, company_code, company_name, report_year, report_type, manual_meta_str, owner),
                 )
             conn.commit()
             return cur.lastrowid
