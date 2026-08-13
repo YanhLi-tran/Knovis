@@ -118,34 +118,22 @@ fi
 
 # ===== 5. 创建 tmux session =====
 info "[3/6] 创建 tmux session: $TMUX_SESSION"
-tmux new-session -d -s "$TMUX_SESSION" -n "memory-service"
-tmux split-window -h -t "$TMUX_SESSION:0"
-tmux split-window -v -t "$TMUX_SESSION:0.0"
-tmux new-window -t "$TMUX_SESSION" -n "doc-service"
-tmux new-window -t "$TMUX_SESSION" -n "knovis-user"
-tmux new-window -t "$TMUX_SESSION" -n "agent-go"
-
-# 窗口布局:
-# window 0 (system): pane 0=memory-service, pane 1=doc-service(右侧,已split), pane 2=系统监控
-# 实际上用单独窗口更清晰: window0=memory, window1=doc, window2=knovis, window3=agent
-# 重新设置:
-tmux kill-window -t "$TMUX_SESSION:0"
-tmux new-window -t "$TMUX_SESSION:0" -n "memory-service"
-tmux new-window -t "$TMUX_SESSION:1" -n "doc-service"
-tmux new-window -t "$TMUX_SESSION:2" -n "knovis-user"
-tmux new-window -t "$TMUX_SESSION:3" -n "agent-go"
-# 删除多余窗口
-tmux kill-window -t "$TMUX_SESSION:4" 2>/dev/null || true
-tmux kill-window -t "$TMUX_SESSION:0" 2>/dev/null || true
-tmux new-window -t "$TMUX_SESSION:0" -n "system"
-tmux select-window -t "$TMUX_SESSION:0"
+# 创建 session 并直接命名第一个窗口为 system
+tmux new-session -d -s "$TMUX_SESSION" -n "system"
+# 依次创建 4 个服务窗口（索引自动递增: 1,2,3,4）
+tmux new-window -t "$TMUX_SESSION:" -n "memory-service"
+tmux new-window -t "$TMUX_SESSION:" -n "doc-service"
+tmux new-window -t "$TMUX_SESSION:" -n "knovis-user"
+tmux new-window -t "$TMUX_SESSION:" -n "agent-go"
+# 选中 system 窗口
+tmux select-window -t "$TMUX_SESSION:system"
 
 # ===== 6. 启动 memory-service (窗口 1)=====
 info "[4/6] 启动 memory-service (端口 $MEMORY_PORT)..."
 MEM_LOG="$LOG_DIR/memory-service.log"
 MEM_CHROMA="$DATA_DIR/chroma-memory"
 mkdir -p "$MEM_CHROMA"
-tmux send-keys -t "$TMUX_SESSION:1" "cd $PROJECT_DIR/memory-service && \
+tmux send-keys -t "$TMUX_SESSION:memory-service" "cd $PROJECT_DIR/memory-service && \
 MEMORY_SERVICE_PORT=$MEMORY_PORT \
 MEMORY_SERVICE_HOST=0.0.0.0 \
 MEMORY_SERVICE_API_KEY='$MEMORY_SERVICE_API_KEY' \
@@ -193,7 +181,7 @@ if [ ! -f "$RERANK_PATH/config.json" ]; then
     RERANK_FLAG="false"
 fi
 
-tmux send-keys -t "$TMUX_SESSION:2" "cd $PROJECT_DIR/doc-service && \
+tmux send-keys -t "$TMUX_SESSION:doc-service" "cd $PROJECT_DIR/doc-service && \
 DOC_SERVICE_PORT=$DOC_PORT \
 DOC_SERVICE_HOST=0.0.0.0 \
 DOC_SERVICE_API_KEY='$DOC_SERVICE_API_KEY' \
@@ -227,7 +215,7 @@ KNOVIS_LOG="$LOG_DIR/knovis-user.log"
 KNOVIS_UPLOAD="${UPLOAD_DIR:-$DATA_DIR/uploads}"
 mkdir -p "$KNOVIS_UPLOAD"
 
-tmux send-keys -t "$TMUX_SESSION:3" "cd $PROJECT_DIR/service/userapi && \
+tmux send-keys -t "$TMUX_SESSION:knovis-user" "cd $PROJECT_DIR/service/userapi && \
 HOST=0.0.0.0 PORT=$KNOVIS_PORT \
 DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_USER=$DB_USER DB_PASSWORD=$DB_PASSWORD DB_NAME=knovis \
 REDIS_HOST=$REDIS_HOST REDIS_PORT=$REDIS_PORT REDIS_PASSWORD=${REDIS_PASSWORD:-} \
@@ -244,7 +232,7 @@ info "Knvos 用户服务启动中..."
 info "[6/6] 启动 agent-go (端口 $AGENT_PORT)..."
 AGENT_LOG="$LOG_DIR/agent-go.log"
 
-tmux send-keys -t "$TMUX_SESSION:4" "cd $PROJECT_DIR/agent-go && \
+tmux send-keys -t "$TMUX_SESSION:agent-go" "cd $PROJECT_DIR/agent-go && \
 AGENT_PORT=$AGENT_PORT AGENT_ENV=production \
 DB_HOST=$DB_HOST DB_PORT=$DB_PORT DB_USER=$DB_USER DB_PASSWORD=$DB_PASSWORD DB_NAME=$DB_NAME \
 REDIS_HOST=$REDIS_HOST REDIS_PORT=$REDIS_PORT REDIS_PASSWORD=${REDIS_PASSWORD:-} REDIS_DB=${REDIS_DB:-0} \
@@ -264,7 +252,7 @@ MASTER_KEY_V1='$MASTER_KEY_V1' \
 $BIN_DIR/agent -f etc/agent-api.yaml 2>&1 | tee $AGENT_LOG" C-m
 
 # ===== 10. 系统监控窗口 =====
-tmux send-keys -t "$TMUX_SESSION:0" "echo '===== Knovis 服务控制台 ====='; echo ''; echo '切换窗口: tmux select-window -t knovis:<窗口名>'; echo '窗口列表: 0=system, 1=memory-service, 2=doc-service, 3=knovis-user, 4=agent-go'; echo '查看所有窗口: tmux list-windows -t knovis'; echo '退出tmux(不停止服务): Ctrl+B 然后按 D'; echo ''; watch -n 5 'echo \"[$(date +%H:%M:%S)] 服务健康检查:\"; curl -sf http://127.0.0.1:$MEMORY_PORT/health 2>/dev/null && echo \"  memory-service: OK\" || echo \"  memory-service: FAIL\"; curl -sf http://127.0.0.1:$DOC_PORT/health 2>/dev/null && echo \"  doc-service: OK\" || echo \"  doc-service: FAIL\"; curl -sf http://127.0.0.1:$AGENT_PORT/health 2>/dev/null && echo \"  agent-go: OK\" || echo \"  agent-go: FAIL\"; echo \"\"; echo \"GPU 状态:\"; nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null || echo \"  nvidia-smi 不可用\"; echo \"\"; echo \"内存使用:\"; free -h | head -2'" C-m
+tmux send-keys -t "$TMUX_SESSION:system" "echo '===== Knovis 服务控制台 ====='; echo ''; echo '切换窗口: tmux select-window -t knovis:<窗口名>'; echo '窗口列表: system / memory-service / doc-service / knovis-user / agent-go'; echo '查看所有窗口: tmux list-windows -t knovis'; echo '退出tmux(不停止服务): Ctrl+B 然后按 D'; echo ''; watch -n 5 'echo \"[$(date +%H:%M:%S)] 服务健康检查:\"; curl -sf http://127.0.0.1:$MEMORY_PORT/health 2>/dev/null && echo \"  memory-service: OK\" || echo \"  memory-service: FAIL\"; curl -sf http://127.0.0.1:$DOC_PORT/health 2>/dev/null && echo \"  doc-service: OK\" || echo \"  doc-service: FAIL\"; curl -sf http://127.0.0.1:$AGENT_PORT/health 2>/dev/null && echo \"  agent-go: OK\" || echo \"  agent-go: FAIL\"; echo \"\"; echo \"GPU 状态:\"; nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader 2>/dev/null || echo \"  nvidia-smi 不可用\"; echo \"\"; echo \"内存使用:\"; free -h | head -2'" C-m
 
 # ===== 11. 等待所有服务就绪 =====
 info "等待所有服务就绪..."

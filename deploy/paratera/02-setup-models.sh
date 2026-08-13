@@ -33,7 +33,7 @@ if [ -f "$BGE_DIR/config.json" ]; then
     info "bge-large-zh 已存在，跳过下载"
 else
     info "下载 bge-large-zh (约 1.3GB)..."
-    pip install -q huggingface_hub -i https://pypi.tuna.tsinghua.edu.cn/simple
+    pip install -q --break-system-packages huggingface_hub -i https://pypi.tuna.tsinghua.edu.cn/simple
     python3 -c "
 from huggingface_hub import snapshot_download
 snapshot_download('BAAI/bge-large-zh', local_dir='$BGE_DIR', local_dir_use_symlinks=False)
