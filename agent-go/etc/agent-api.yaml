@@ -18,7 +18,7 @@ MySQL:
 
 # ===== Redis（缓存 + token 黑名单）=====
 Redis:
-  Host: ${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}
+  Host: "${REDIS_HOST:-127.0.0.1}:${REDIS_PORT:-6379}"
   Pass: ${REDIS_PASSWORD:-}
   Db: ${REDIS_DB:-0}
 
