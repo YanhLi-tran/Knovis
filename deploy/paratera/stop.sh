@@ -42,7 +42,9 @@ done
 # 3. 停止 MySQL/Redis（除非 --keep-db）
 if [ "$KEEP_DB" = false ]; then
     info "停止 MySQL..."
-    service mysql stop 2>/dev/null || mysqladmin shutdown -uroot -p"knovis123" 2>/dev/null || true
+    # 读取 .env 中的密码（兜底用 knovis123，与 .env.paratera 默认值保持一致）
+    STOP_MYSQL_PWD="${DB_PASSWORD:-knovis123}"
+    service mysql stop 2>/dev/null || mysqladmin shutdown -uroot -p"${STOP_MYSQL_PWD}" 2>/dev/null || true
 
     info "停止 Redis..."
     redis-cli shutdown 2>/dev/null || true

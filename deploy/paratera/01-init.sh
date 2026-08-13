@@ -64,17 +64,20 @@ mkdir -p "$PROJECT_DIR/logs"
 info "目录结构创建完成"
 
 # ===== 4. MySQL 初始化 =====
-info "[4/7] 配置 MySQL 数据目录到共享存储 + 初始化数据库..."
-# 把 MySQL 数据目录迁移到共享存储（30GB 系统盘不够）
-if [ ! -L "/var/lib/mysql" ] || [ ! -d "$DATA_DIR/mysql/mysql" ]; then
+info "[4/7] 配置 MySQL（数据目录保持系统盘默认位置 /var/lib/mysql）..."
+# 注意: 并行智算云共享存储(/root/shared-nvme)是 NFS 文件系统,不支持 chown,
+#       MySQL 数据目录放 NFS 会导致权限错误。MySQL 数据本身不大(几十MB),
+#       放系统盘(/var/lib/mysql)完全够用,并行智算云关机时系统盘也会持久化。
+# 恢复: 如果之前误迁移到了共享存储,恢复回系统盘
+if [ -L "/var/lib/mysql" ]; then
+    info "检测到 /var/lib/mysql 是符号链接(之前迁移过),恢复回系统盘..."
     service mysql stop 2>/dev/null || true
-    # 如果目标目录为空才迁移
-    if [ ! -d "$DATA_DIR/mysql/mysql" ]; then
-        cp -a /var/lib/mysql/* "$DATA_DIR/mysql/" 2>/dev/null || true
+    SHARED_MYSQL=$(readlink -f /var/lib/mysql)
+    rm -f /var/lib/mysql
+    if [ -d "$SHARED_MYSQL/mysql" ]; then
+        cp -a "$SHARED_MYSQL"/* /var/lib/mysql/ 2>/dev/null || true
     fi
-    rm -rf /var/lib/mysql
-    ln -sf "$DATA_DIR/mysql" /var/lib/mysql
-    chown -R mysql:mysql "$DATA_DIR/mysql"
+    chown -R mysql:mysql /var/lib/mysql 2>/dev/null || true
 fi
 
 # 修改 MySQL 绑定地址允许 0.0.0.0
@@ -108,18 +111,15 @@ fi
 info "MySQL 配置完成"
 
 # ===== 5. Redis 配置 =====
-info "[5/7] 配置 Redis..."
-# Redis 数据目录改到共享存储
+info "[5/7] 配置 Redis（数据目录保持系统盘默认位置）..."
+# 注意: 共享存储(NFS)不适合 Redis 持久化,保持系统盘默认 /var/lib/redis
 REDIS_CONF="/etc/redis/redis.conf"
 if [ -f "$REDIS_CONF" ]; then
-    sed -i "s|^dir .*|dir $DATA_DIR/redis|" "$REDIS_CONF"
     sed -i "s|^# bind 127.0.0.1|bind 0.0.0.0|" "$REDIS_CONF"
     sed -i "s|^bind 127.0.0.1|bind 0.0.0.0|" "$REDIS_CONF"
     sed -i "s|^ supervised .*|supervised no|" "$REDIS_CONF"
 fi
-mkdir -p "$DATA_DIR/redis"
-chown redis:redis "$DATA_DIR/redis"
-service redis-server start 2>/dev/null || redis-server --daemonize yes --dir "$DATA_DIR/redis"
+service redis-server start 2>/dev/null || redis-server --daemonize yes
 info "Redis 配置完成"
 
 # ===== 6. Python 依赖 =====

@@ -117,8 +117,10 @@ print(f"构造 {len(memories)} 条记忆: fact={len(facts)} pref={len(prefs)} ev
 
 # 写入 MySQL
 import pymysql
-conn = pymysql.connect(host="127.0.0.1", port=3306, user="root", password="123456",
-                       database="agent_go", charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor)
+_db_pwd = os.getenv("DB_PASSWORD", "123456")  # 默认开发密码，生产环境必须通过环境变量传入
+conn = pymysql.connect(host=os.getenv("DB_HOST", "127.0.0.1"), port=int(os.getenv("DB_PORT", "3306")),
+                       user=os.getenv("DB_USER", "root"), password=_db_pwd,
+                       database=os.getenv("DB_NAME", "agent_go"), charset="utf8mb4", cursorclass=pymysql.cursors.DictCursor)
 with conn.cursor() as cur:
     for m in memories:
         cur.execute(

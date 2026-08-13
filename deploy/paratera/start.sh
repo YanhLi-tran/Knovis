@@ -81,7 +81,7 @@ info "MySQL 就绪"
 # ===== 2. 启动 Redis =====
 info "[2/6] 启动 Redis..."
 if ! redis-cli -h"$REDIS_HOST" -p"$REDIS_PORT" ping 2>/dev/null | grep -q PONG; then
-    redis-server --daemonize yes --dir "$DATA_DIR/redis" --bind 0.0.0.0
+    redis-server --daemonize yes --bind 0.0.0.0
     sleep 1
 fi
 info "Redis 就绪"

@@ -77,4 +77,42 @@ agent-workspace/
 .tmp_chat1.json
 
 # ===== deploy/paratera（并行智算云部署）=====
-# 环境变量模板含敏感信息，不入库（脚本注释说明: cp .env.paratera .env 后本地编辑）
+# 环境变量模板 .env.paratera 入库作为参考，但实际使用的 .env 不入库（已被上面 **/.env 覆盖）
+
+# 部署生成的编译产物（agent / knovis-user-api / local-agent）
+deploy/paratera/bin/
+bin/
+
+# 部署运行时日志
+deploy/paratera/logs/
+logs/
+
+# 部署运行时数据（MySQL / Redis / Chroma / uploads，均在共享存储 /root/shared-nvme/data）
+deploy/paratera/data/
+data/
+
+# 部署时下载的模型文件（bge-large-zh / bge-reranker-v2-m3，大文件不入库）
+deploy/paratera/models/
+models/
+!memory-service/models/.gitkeep
+!doc-service/models/.gitkeep
+
+# ===== IDE / 编辑器 =====
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# ===== Docker =====
+# docker-compose 运行时数据卷（不入库）
+data/mysql/
+data/redis/
+data/chroma-doc/
+data/chroma-memory/
+data/uploads/
+
+# ===== 其他 =====
+*.tar.gz
+*.zip
+.qodo/
