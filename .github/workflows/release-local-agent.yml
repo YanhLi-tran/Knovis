@@ -100,4 +100,8 @@ jobs:
                - macOS/Linux: `./local-agent -server ws://<服务器IP>:8001 -workdir ~/knovis-workspace`
             3. 保持窗口常开，登录 Knovis 前端，登录成功后自动激活并绑定当前账号
             4. 不传 `-workdir` 时默认用二进制旁的 `./workspace` 目录
+
+            ### Windows SmartScreen 提示
+            Windows 下载未签名 exe 时会弹出"Windows 已保护你的电脑"。本程序开源(见源码 `local-agent/`)，可放心运行：
+            点击 **更多信息** → **仍要运行** 即可。
           files: dist/local-agent-*
