@@ -2304,12 +2304,12 @@
                     <label class="form-label">Agent 行为设置</label>
                     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">0=无限制，1~50限制连续工具调用次数，LLM输出文本重置计数</span></label>
-                            <input type="number" class="form-input" id="ucMaxToolRounds" min="0" max="50" value="0" style="width:110px;" />
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">0=无限制，默认15，限制连续工具调用次数，LLM输出文本重置计数</span></label>
+                            <input type="number" class="form-input" id="ucMaxToolRounds" min="0" max="50" value="15" style="width:110px;" />
                         </div>
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">OTACO总迭代轮数 <span class="opt">0=无限制，1~50限制整个思考循环次数</span></label>
-                            <input type="number" class="form-input" id="ucMaxOTACOIterations" min="0" max="50" value="0" style="width:110px;" />
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">OTACO总迭代轮数 <span class="opt">0=无限制，默认10，限制整个思考循环次数</span></label>
+                            <input type="number" class="form-input" id="ucMaxOTACOIterations" min="0" max="50" value="10" style="width:110px;" />
                         </div>
                         <div>
                             <label class="form-label" style="margin-bottom:5px;font-size:12px;">上下文大小 <span class="opt">token，0=默认64000，上限1M</span></label>
@@ -4371,8 +4371,8 @@ async function onChangeSandboxMode() {
         const body = {
             basic_info: base.basic_info || '', location: base.location || '',
             preferences: base.preferences || '', raw_text: base.raw_text || '',
-            max_tool_rounds: base.max_tool_rounds || 0,
-            max_otaco_iterations: base.max_otaco_iterations || 0,
+            max_tool_rounds: base.max_tool_rounds ?? 15,
+            max_otaco_iterations: base.max_otaco_iterations ?? 10,
             max_context_length: base.max_context_length || 0,
             backup_mode: base.backup_mode || 'snapshot',
             sandbox_mode: next,

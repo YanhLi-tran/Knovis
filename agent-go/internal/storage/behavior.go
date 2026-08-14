@@ -2,7 +2,7 @@ package storage
 
 // AgentBehavior 用户 Agent 行为设置（P9，来自 UserConfig，覆盖全局默认）
 type AgentBehavior struct {
-	// MaxToolRounds 连续调用工具轮数上限（0=全局默认10，范围1-50）
+	// MaxToolRounds 连续调用工具轮数上限（0=无限制，正数范围1-50；未配置用户默认15）
 	MaxToolRounds int
 	// SandboxMode 沙箱权限模式：ask / auto / yolo（空=ask）
 	SandboxMode string
@@ -10,15 +10,15 @@ type AgentBehavior struct {
 	BackupMode string
 	// MaxContextLength 用户自定义上下文大小 token数（0=未设置 → 项目级/默认 64000）
 	MaxContextLength int
-	// MaxOTACOIterations OTACO 总迭代轮数上限（0=全局默认15，范围1-50）
+	// MaxOTACOIterations OTACO 总迭代轮数上限（0=无限制，正数范围1-50；未配置用户默认10）
 	MaxOTACOIterations int
 }
 
-// DefaultMaxToolRounds 连续工具轮数全局默认
-const DefaultMaxToolRounds = 10
+// DefaultMaxToolRounds 连续工具轮数全局默认（未配置用户兜底）
+const DefaultMaxToolRounds = 15
 
-// DefaultMaxOTACOIterations OTACO 总迭代轮数全局默认
-const DefaultMaxOTACOIterations = 15
+// DefaultMaxOTACOIterations OTACO 总迭代轮数全局默认（未配置用户兜底）
+const DefaultMaxOTACOIterations = 10
 
 // DefaultMaxContextLength 项目上下文长度默认（token）
 const DefaultMaxContextLength = 64000

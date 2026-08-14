@@ -941,14 +941,21 @@ func (o *Orchestrator) resolveSessionContext(sessionID, projectID string) (sessi
 }
 
 // loadUserBehavior 加载用户 Agent 行为设置（P9）
-// 读 UserConfig 中 MaxToolRounds / SandboxMode / BackupMode；无配置时返回默认（全局兜底）
+// 读 UserConfig 中 MaxToolRounds / SandboxMode / BackupMode / MaxOTACOIterations；
+// 未配置用户（uc==nil）返回默认值（工具轮数15/OTACO 10），已配置用户按存储值（0=无限制）
 func (o *Orchestrator) loadUserBehavior(userID string) storage.AgentBehavior {
 	if userID == "" || o.persister == nil || o.persister.repos == nil {
-		return storage.AgentBehavior{}
+		return storage.AgentBehavior{
+			MaxToolRounds:     storage.DefaultMaxToolRounds,
+			MaxOTACOIterations: storage.DefaultMaxOTACOIterations,
+		}
 	}
 	uc, err := o.persister.repos.UserConfig.GetByUserID(userID)
 	if err != nil || uc == nil {
-		return storage.AgentBehavior{}
+		return storage.AgentBehavior{
+			MaxToolRounds:     storage.DefaultMaxToolRounds,
+			MaxOTACOIterations: storage.DefaultMaxOTACOIterations,
+		}
 	}
 	return uc.Behavior()
 }
