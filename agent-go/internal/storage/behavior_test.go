@@ -2,17 +2,17 @@ package storage
 
 import "testing"
 
-// TestEffectiveMaxToolRounds 未设置/越界收敛到合法范围
+// TestEffectiveMaxToolRounds 0=无限制；正数收敛到1-50
 func TestEffectiveMaxToolRounds(t *testing.T) {
 	cases := []struct {
 		in   int
 		want int
 	}{
-		{0, 10},  // 未设置 → 默认 10
+		{0, 0},   // 0 = 无限制
+		{-5, 0},  // 负数 = 无限制
 		{8, 8},   // 正常值
 		{50, 50}, // 上限
 		{99, 50}, // 越界收敛到 50
-		{-5, 1},  // 负数收敛到 1
 	}
 	for _, c := range cases {
 		b := AgentBehavior{MaxToolRounds: c.in}
@@ -22,17 +22,17 @@ func TestEffectiveMaxToolRounds(t *testing.T) {
 	}
 }
 
-// TestEffectiveMaxOTACOIterations 未设置/越界收敛到合法范围
+// TestEffectiveMaxOTACOIterations 0=无限制；正数收敛到1-50
 func TestEffectiveMaxOTACOIterations(t *testing.T) {
 	cases := []struct {
 		in   int
 		want int
 	}{
-		{0, 15},  // 未设置 → 默认 15
+		{0, 0},   // 0 = 无限制
+		{-5, 0},  // 负数 = 无限制
 		{20, 20}, // 正常值
 		{50, 50}, // 上限
 		{99, 50}, // 越界收敛到 50
-		{-5, 1},  // 负数收敛到 1
 	}
 	for _, c := range cases {
 		b := AgentBehavior{MaxOTACOIterations: c.in}

@@ -182,15 +182,12 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		}
 
 		// 读取限额
-	// maxIter 优先级：用户配置 MaxOTACOIterations > 项目规则 Limits.MaxOTACOIterations > 默认15
+	// maxIter: 0=无限制（ctx 超时兜底），>0 为上限；用户配置优先
 	ruleBasic := o.configMgr.GetRuleBasic()
-	maxIter := behavior.EffectiveMaxOTACOIterations()
+	maxIter := behavior.EffectiveMaxOTACOIterations() // 0=无限制
 	maxErrors := 5
 	maxRetryPerTool := 2
 	if ruleBasic != nil {
-		if ruleBasic.Limits.MaxOTACOIterations > 0 && behavior.MaxOTACOIterations == 0 {
-			maxIter = ruleBasic.Limits.MaxOTACOIterations
-		}
 		if ruleBasic.Limits.MaxConsecutiveErrors > 0 {
 			maxErrors = ruleBasic.Limits.MaxConsecutiveErrors
 		}
@@ -213,8 +210,8 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		"iteration": 0,
 	}}
 
-	// OTACO 循环
-	for iteration := 0; iteration < maxIter; iteration++ {
+	// OTACO 循环（maxIter=0 表示无限制，由 ctx 超时兜底）
+	for iteration := 0; maxIter == 0 || iteration < maxIter; iteration++ {
 		log.Printf("[INFO][otaco] 第 %d 轮迭代开始", iteration+1)
 		// 保存当前消息快照（用于 rollback）
 		snapshot := make([]llm.Message, len(messages))
@@ -331,11 +328,11 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		// P9: 连续工具轮计数（assistant 无文本内容且仅调用工具 → 连续工具轮累加；有文本/最终答案则重置）
 		if cleanedContent == "" && len(toolCalls) > 0 {
 			consecutiveToolRounds++
-			maxRounds := behavior.EffectiveMaxToolRounds()
-			if consecutiveToolRounds > maxRounds {
+			maxRounds := behavior.EffectiveMaxToolRounds() // 0=无限制
+			if maxRounds > 0 && consecutiveToolRounds > maxRounds {
 				log.Printf("[ERROR][otaco] 连续工具调用轮数超限 rounds=%d max=%d userID=%s", consecutiveToolRounds, maxRounds, userID)
 				ch <- errorEvent("max_tool_rounds",
-					fmt.Sprintf("已连续调用工具 %d 轮，超过上限 %d（可在「用户配置」中调整连续工具轮数）", consecutiveToolRounds, maxRounds))
+					fmt.Sprintf("已连续调用工具 %d 轮，超过上限 %d（可在「用户配置」中调整连续工具轮数，0=无限制）", consecutiveToolRounds, maxRounds))
 				return
 			}
 		} else {
@@ -460,9 +457,13 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		log.Printf("[INFO][otaco] 第 %d 轮迭代结束", iteration+1)
 	}
 
-	// 达到最大迭代次数（最后一轮已在循环底部持久化）
+	// 达到最大迭代次数（maxIter=0 无限制时不会走到这里，由 ctx 超时退出）
 	log.Printf("[ERROR][otaco] 达到最大迭代次数 maxIter=%d", maxIter)
-	ch <- errorEvent("max_iterations", fmt.Sprintf("已达到最大迭代次数 %d", maxIter))
+	if maxIter > 0 {
+		ch <- errorEvent("max_iterations", fmt.Sprintf("已达到最大迭代次数 %d（可在「用户配置」中调整 OTACO 总迭代轮数，0=无限制）", maxIter))
+	} else {
+		ch <- errorEvent("max_iterations", "OTACO 循环异常退出（无限制模式）")
+	}
 	}()
 
 	return ch

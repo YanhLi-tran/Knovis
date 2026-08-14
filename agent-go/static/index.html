@@ -2304,12 +2304,12 @@
                     <label class="form-label">Agent 行为设置</label>
                     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">1~50，默认10，限制连续工具调用次数，LLM输出文本重置计数</span></label>
-                            <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" style="width:110px;" />
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">0=无限制，1~50限制连续工具调用次数，LLM输出文本重置计数</span></label>
+                            <input type="number" class="form-input" id="ucMaxToolRounds" min="0" max="50" value="0" style="width:110px;" />
                         </div>
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">OTACO总迭代轮数 <span class="opt">1~50，默认15，限制整个思考循环次数</span></label>
-                            <input type="number" class="form-input" id="ucMaxOTACOIterations" min="1" max="50" value="0" style="width:110px;" />
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">OTACO总迭代轮数 <span class="opt">0=无限制，1~50限制整个思考循环次数</span></label>
+                            <input type="number" class="form-input" id="ucMaxOTACOIterations" min="0" max="50" value="0" style="width:110px;" />
                         </div>
                         <div>
                             <label class="form-label" style="margin-bottom:5px;font-size:12px;">上下文大小 <span class="opt">token，0=默认64000，上限1M</span></label>

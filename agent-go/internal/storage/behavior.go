@@ -26,14 +26,12 @@ const DefaultMaxContextLength = 64000
 // MaxContextLengthUpperBound 用户可设置的最大上下文（DeepSeek 1M）
 const MaxContextLengthUpperBound = 1048576
 
-// EffectiveMaxToolRounds 计算生效的连续工具轮上限（0=未设置 → 默认10，越界收敛到1-50）
+// EffectiveMaxToolRounds 计算生效的连续工具轮上限
+// 0=无限制（ctx 超时兜底）；正数收敛到1-50
 func (b AgentBehavior) EffectiveMaxToolRounds() int {
 	n := b.MaxToolRounds
-	if n == 0 {
-		n = DefaultMaxToolRounds
-	}
-	if n < 1 {
-		n = 1
+	if n <= 0 {
+		return 0 // 无限制
 	}
 	if n > 50 {
 		n = 50
@@ -41,14 +39,12 @@ func (b AgentBehavior) EffectiveMaxToolRounds() int {
 	return n
 }
 
-// EffectiveMaxOTACOIterations 计算生效的 OTACO 总迭代轮上限（0=未设置 → 默认15，越界收敛到1-50）
+// EffectiveMaxOTACOIterations 计算生效的 OTACO 总迭代轮上限
+// 0=无限制（ctx 超时兜底）；正数收敛到1-50
 func (b AgentBehavior) EffectiveMaxOTACOIterations() int {
 	n := b.MaxOTACOIterations
-	if n == 0 {
-		n = DefaultMaxOTACOIterations
-	}
-	if n < 1 {
-		n = 1
+	if n <= 0 {
+		return 0 // 无限制
 	}
 	if n > 50 {
 		n = 50
