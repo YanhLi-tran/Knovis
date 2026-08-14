@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
@@ -2304,22 +2304,26 @@
                     <label class="form-label">Agent 行为设置</label>
                     <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap;">
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">1~50，默认10</span></label>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">连续工具轮数 <span class="opt">1~50，默认10，限制连续工具调用次数，LLM输出文本重置计数</span></label>
                             <input type="number" class="form-input" id="ucMaxToolRounds" min="1" max="50" value="0" style="width:110px;" />
+                        </div>
+                        <div>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">OTACO总迭代轮数 <span class="opt">1~50，默认15，限制整个思考循环次数</span></label>
+                            <input type="number" class="form-input" id="ucMaxOTACOIterations" min="1" max="50" value="0" style="width:110px;" />
                         </div>
                         <div>
                             <label class="form-label" style="margin-bottom:5px;font-size:12px;">上下文大小 <span class="opt">token，0=默认64000，上限1M</span></label>
                             <input type="number" class="form-input" id="ucMaxContextLength" min="0" max="1048576" step="1000" value="0" style="width:140px;" />
                         </div>
                         <div>
-                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">文件备份方式 <span class="opt">YOLO 生效</span></label>
+                            <label class="form-label" style="margin-bottom:5px;font-size:12px;">文件备份方式 <span class="opt">所有模式生效</span></label>
                             <div style="display:flex;gap:10px;flex-wrap:wrap;">
                                 <label class="radio-label"><input type="radio" name="ucBackupMode" value="snapshot" checked /> 快照</label>
                                 <label class="radio-label"><input type="radio" name="ucBackupMode" value="git" /> Git</label>
                             </div>
                         </div>
                     </div>
-                    <div class="form-help">沙箱权限模式在聊天框左侧快捷切换（询问/自动/YOLO）· 备份方式在 YOLO 模式下生效</div>
+                    <div class="form-help">沙箱权限模式在聊天框左侧快捷切换（询问/自动/YOLO）· 备份在所有模式下对写入/删除操作生效</div>
                 </div>
                 <div class="form-group">
                     <label class="form-label">原始文本 <span class="opt">可选，便于直接注入</span></label>
@@ -4294,6 +4298,7 @@ async function loadUserConfig() {
                 $('ucPreferences').value = uc.preferences || '';
                 $('ucRawText').value = uc.raw_text || '';
                 $('ucMaxToolRounds').value = uc.max_tool_rounds || 0;
+                $('ucMaxOTACOIterations').value = uc.max_otaco_iterations || 0;
                 $('ucMaxContextLength').value = uc.max_context_length || 0;
                 const bm = uc.backup_mode || 'snapshot';
                 document.querySelectorAll('input[name="ucBackupMode"]').forEach(r => { r.checked = (r.value === bm); });
@@ -4304,6 +4309,7 @@ async function loadUserConfig() {
 
 async function saveUserConfig() {
     const rounds = parseInt($('ucMaxToolRounds').value || '0', 10);
+    const otacoIter = parseInt($('ucMaxOTACOIterations').value || '0', 10);
     const maxCtx = parseInt($('ucMaxContextLength').value || '0', 10);
     const backupMode = document.querySelector('input[name="ucBackupMode"]:checked')?.value || 'snapshot';
     const body = {
@@ -4312,6 +4318,7 @@ async function saveUserConfig() {
         preferences: $('ucPreferences').value.trim(),
         raw_text: $('ucRawText').value.trim(),
         max_tool_rounds: Math.min(Math.max(rounds || 0, 0), 50),
+        max_otaco_iterations: Math.min(Math.max(otacoIter || 0, 0), 50),
         max_context_length: Math.min(Math.max(maxCtx || 0, 0), 1048576),
         backup_mode: backupMode,
     };
@@ -4364,7 +4371,10 @@ async function onChangeSandboxMode() {
         const body = {
             basic_info: base.basic_info || '', location: base.location || '',
             preferences: base.preferences || '', raw_text: base.raw_text || '',
-            max_tool_rounds: base.max_tool_rounds || 0, backup_mode: base.backup_mode || 'snapshot',
+            max_tool_rounds: base.max_tool_rounds || 0,
+            max_otaco_iterations: base.max_otaco_iterations || 0,
+            max_context_length: base.max_context_length || 0,
+            backup_mode: base.backup_mode || 'snapshot',
             sandbox_mode: next,
         };
         const r2 = await apiFetch('/memory/user-config', { method: 'PUT', body: JSON.stringify(body) });

@@ -182,12 +182,13 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		}
 
 		// 读取限额
+	// maxIter 优先级：用户配置 MaxOTACOIterations > 项目规则 Limits.MaxOTACOIterations > 默认15
 	ruleBasic := o.configMgr.GetRuleBasic()
-	maxIter := 15
+	maxIter := behavior.EffectiveMaxOTACOIterations()
 	maxErrors := 5
 	maxRetryPerTool := 2
 	if ruleBasic != nil {
-		if ruleBasic.Limits.MaxOTACOIterations > 0 {
+		if ruleBasic.Limits.MaxOTACOIterations > 0 && behavior.MaxOTACOIterations == 0 {
 			maxIter = ruleBasic.Limits.MaxOTACOIterations
 		}
 		if ruleBasic.Limits.MaxConsecutiveErrors > 0 {
@@ -512,11 +513,10 @@ func (o *Orchestrator) processToolCalls(ctx context.Context, ch chan<- SSEEvent,
 	// userID 从 ctx 取（load_skill 需按用户绑定工具 Handler）
 	userID, _ := ctx.Value(tools.CtxKeyUserID).(string)
 
-	// P9: yolo 模式下为 sandbox_exec 注入透传标记（local-agent 据此跳过白名单并做备份留痕）
-	if behavior.EffectiveSandboxMode() == "yolo" {
-		for i := range calls {
-			injectYoloArgs(&calls[i], behavior)
-		}
+	// P9: 所有模式为 sandbox_exec / file_write 注入备份标记（危险操作前备份可回退）
+	// yolo 模式额外注入 _yolo=true（local-agent 据此跳过命令白名单）
+	for i := range calls {
+		injectBackupArgs(&calls[i], behavior)
 	}
 
 	for _, call := range calls {
@@ -952,10 +952,10 @@ func (o *Orchestrator) loadUserBehavior(userID string) storage.AgentBehavior {
 	return uc.Behavior()
 }
 
-// injectYoloArgs 为需透传的工具注入 yolo 标记（P9）
-// sandbox_exec / file_write：local-agent 收到 _yolo=true 后跳过白名单（命令）并做备份留痕；
-// _backup_mode 指定备份方式（snapshot/git），危险操作（删除/覆盖）执行前先备份到 .backup/，实现可回退
-func injectYoloArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
+// injectBackupArgs 为 sandbox_exec / file_write 注入备份透传标记（所有模式生效，P9）
+// _backup_mode: 指定备份方式（snapshot/git），危险操作（删除/覆盖）执行前先备份到 .backup/，实现可回退
+// _yolo: 仅 yolo 模式注入 true，local-agent 据此跳过命令白名单（ask/auto 模式不注入，白名单仍生效）
+func injectBackupArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
 	switch call.Function.Name {
 	case "sandbox_exec", "file_write":
 	default:
@@ -965,14 +965,17 @@ func injectYoloArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return
 	}
-	args["_yolo"] = true
 	args["_backup_mode"] = behavior.EffectiveBackupMode()
+	isYolo := behavior.EffectiveSandboxMode() == "yolo"
+	if isYolo {
+		args["_yolo"] = true
+	}
 	b, err := json.Marshal(args)
 	if err != nil {
 		return
 	}
 	call.Function.Arguments = string(b)
-	log.Printf("[INFO][otaco] yolo 模式注入工具 %s 透传标记 backup_mode=%s", call.Function.Name, behavior.EffectiveBackupMode())
+	log.Printf("[INFO][otaco] 注入工具 %s 备份标记 backup_mode=%s yolo=%v", call.Function.Name, behavior.EffectiveBackupMode(), isYolo)
 }
 
 // buildTools 构建工具定义列表（含 ask_user + load_skill + session 已加载 skill 工具）

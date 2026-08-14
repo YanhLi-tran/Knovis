@@ -245,6 +245,8 @@ type UpsertUserConfigRequest struct {
 	BackupMode    string `json:"backup_mode,omitempty"`     // snapshot/git
 	// P10: 用户自定义上下文大小（0=项目级/默认 64000，范围 1000-1048576）
 	MaxContextLength int `json:"max_context_length,omitempty"`
+	// OTACO 总迭代轮数上限（0=全局默认15，范围1-50）
+	MaxOTACOIterations int `json:"max_otaco_iterations,omitempty"`
 }
 
 // upsertUserConfig PUT /memory/user-config
@@ -265,10 +267,11 @@ func (s *Server) upsertUserConfig(c *GinCompat) {
 		Location:        req.Location,
 		Preferences:     req.Preferences,
 		RawText:         req.RawText,
-		MaxToolRounds:   req.MaxToolRounds,
-		SandboxMode:     req.SandboxMode,
-		BackupMode:      req.BackupMode,
-		MaxContextLength: req.MaxContextLength,
+		MaxToolRounds:     req.MaxToolRounds,
+		SandboxMode:       req.SandboxMode,
+		BackupMode:        req.BackupMode,
+		MaxContextLength:  req.MaxContextLength,
+		MaxOTACOIterations: req.MaxOTACOIterations,
 	}
 	if err := s.repos.UserConfig.Upsert(uc); err != nil {
 		log.Printf("[ERROR][api] upsertUserConfig 失败 userID=%s err=%v", userID, err)

@@ -132,9 +132,10 @@ func fileWrite(args map[string]any) (string, string) {
 		return "", "缺少参数 path"
 	}
 
-	// P9: yolo 模式覆盖已有文件前先备份（可回退）+ git 版本控制
-	yolo, backupMode := yoloMode(args)
-	if yolo && mode != "append" {
+	// P9: 所有模式覆盖已有文件前先备份（可回退）+ git 版本控制
+	// _yolo 仅控制白名单跳过（sandbox_exec），备份行为不依赖 yolo
+	_, backupMode := yoloMode(args)
+	if mode != "append" {
 		if _, serr := os.Stat(path); serr == nil {
 			backupPath(path, "write", backupMode)
 		}
@@ -153,10 +154,8 @@ func fileWrite(args map[string]any) (string, string) {
 	if err != nil {
 		return "", fmt.Sprintf("写入失败: %v", err)
 	}
-	// P9: yolo + git 模式提交版本
-	if yolo {
-		yoloAfterHook(backupMode, "yolo file_write: "+path)
-	}
+	// git 模式提交版本（snapshot 模式 no-op）
+	yoloAfterHook(backupMode, "file_write: "+path)
 	return fmt.Sprintf(`{"status":"ok","path":"%s","mode":"%s","bytes":%d}`, path, mode, len(content)), ""
 }
 
@@ -280,8 +279,8 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 		logf("[yolo] 白名单外命令放行: %q (backup=%s)", command, backupMode)
 	}
 
-	// P9: yolo 删除类命令执行前备份目标（可回退）
-	if yolo && isDeleteCommand(cmdName) {
+	// P9: 删除类命令执行前备份目标（所有模式都备份，可回退）
+	if isDeleteCommand(cmdName) {
 		backupDeleteTargets(tokens, backupMode)
 	}
 
@@ -338,10 +337,8 @@ func sandboxExec(args map[string]any, timeout time.Duration) (string, string) {
 		}
 		return output, fmt.Sprintf("命令执行失败: %v", err)
 	}
-	// P9: yolo + git 模式提交版本
-	if yolo {
-		yoloAfterHook(backupMode, "yolo exec: "+command)
-	}
+	// P9: 所有模式 git 提交版本（snapshot 模式 no-op）
+	yoloAfterHook(backupMode, "exec: "+command)
 	return output, ""
 }
 

@@ -10,10 +10,15 @@ type AgentBehavior struct {
 	BackupMode string
 	// MaxContextLength 用户自定义上下文大小 token数（0=未设置 → 项目级/默认 64000）
 	MaxContextLength int
+	// MaxOTACOIterations OTACO 总迭代轮数上限（0=全局默认15，范围1-50）
+	MaxOTACOIterations int
 }
 
 // DefaultMaxToolRounds 连续工具轮数全局默认
 const DefaultMaxToolRounds = 10
+
+// DefaultMaxOTACOIterations OTACO 总迭代轮数全局默认
+const DefaultMaxOTACOIterations = 15
 
 // DefaultMaxContextLength 项目上下文长度默认（token）
 const DefaultMaxContextLength = 64000
@@ -26,6 +31,21 @@ func (b AgentBehavior) EffectiveMaxToolRounds() int {
 	n := b.MaxToolRounds
 	if n == 0 {
 		n = DefaultMaxToolRounds
+	}
+	if n < 1 {
+		n = 1
+	}
+	if n > 50 {
+		n = 50
+	}
+	return n
+}
+
+// EffectiveMaxOTACOIterations 计算生效的 OTACO 总迭代轮上限（0=未设置 → 默认15，越界收敛到1-50）
+func (b AgentBehavior) EffectiveMaxOTACOIterations() int {
+	n := b.MaxOTACOIterations
+	if n == 0 {
+		n = DefaultMaxOTACOIterations
 	}
 	if n < 1 {
 		n = 1
@@ -84,9 +104,10 @@ func (uc *UserConfig) Behavior() AgentBehavior {
 		return AgentBehavior{}
 	}
 	return AgentBehavior{
-		MaxToolRounds:    uc.MaxToolRounds,
-		SandboxMode:      uc.SandboxMode,
-		BackupMode:       uc.BackupMode,
-		MaxContextLength: uc.MaxContextLength,
+		MaxToolRounds:     uc.MaxToolRounds,
+		SandboxMode:       uc.SandboxMode,
+		BackupMode:        uc.BackupMode,
+		MaxContextLength:  uc.MaxContextLength,
+		MaxOTACOIterations: uc.MaxOTACOIterations,
 	}
 }
