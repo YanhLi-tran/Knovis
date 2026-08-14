@@ -119,15 +119,20 @@ _mysql_pool: Optional[PooledDB] = None
 
 
 def _get_mysql_pool() -> PooledDB:
-    """获取 MySQL 连接池单例(dbutils PooledDB,省 TCP 握手开销)."""
+    """获取 MySQL 连接池单例(dbutils PooledDB,省 TCP 握手开销).
+
+    连接池上限从 20 降到 8:避免扫描文档时占满 MySQL max_connections,
+    导致 Knovis 用户服务拿不到连接 → 注册/登录 context deadline exceeded。
+    doc-service 检索请求并发不高,8 个连接足够;扫描写入用单连接顺序提交,不抢占。
+    """
     global _mysql_pool
     if _mysql_pool is not None:
         return _mysql_pool
     _mysql_pool = PooledDB(
         creator=pymysql,
         mincached=2,
-        maxcached=10,
-        maxconnections=20,
+        maxcached=5,
+        maxconnections=8,
         blocking=True,
         host=os.getenv("DB_HOST", "127.0.0.1"),
         port=int(os.getenv("DB_PORT", "3306")),
@@ -139,7 +144,7 @@ def _get_mysql_pool() -> PooledDB:
         connect_timeout=5,
         read_timeout=15,
     )
-    logger.info("MySQL 连接池已初始化(mincached=2, maxcached=10, maxconnections=20)")
+    logger.info("MySQL 连接池已初始化(mincached=2, maxcached=5, maxconnections=8)")
     return _mysql_pool
 
 
@@ -167,7 +172,7 @@ def get_document(doc_id: int) -> Optional[Dict[str, Any]]:
     """查询单个文档元信息(未软删)."""
     sql = (
         "SELECT id, filename, file_path, file_size, total_pages, total_chunks, "
-        "status, company_code, company_name, report_year, report_type, created_at "
+        "status, company_code, company_name, report_year, report_type, created_at, owner_id "
         "FROM agent_documents WHERE id = %s AND deleted_at IS NULL"
     )
     try:
