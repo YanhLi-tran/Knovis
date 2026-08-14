@@ -408,9 +408,25 @@ def get_doc(doc_id: int):
 
 
 @app.delete("/documents/{doc_id}")
-def delete_doc(doc_id: int):
-    """级联删除:软删文档 + 硬删 chunks + 删 Chroma 向量."""
-    from store import delete_document_cascade
+def delete_doc(doc_id: int, request: Request):
+    """级联删除:软删文档 + 硬删 chunks + 删 Chroma 向量.
+
+    权限校验:从 X-Owner-Id 头取 owner_id。
+    - owner_id 为空(管理员直连 doc-service):可删任何文档(全局共享 + 私有)
+    - owner_id 非空(普通用户):只能删自己的私有文档,全局共享(owner_id IS NULL)禁删
+    """
+    from store import delete_document_cascade, get_document
+    owner_id = request.headers.get("X-Owner-Id", "")
+    # 权限校验:普通用户只能删自己的私有文档
+    if owner_id:
+        doc = get_document(doc_id)
+        if doc is None:
+            raise HTTPException(status_code=404, detail="文档不存在")
+        doc_owner = doc.get("owner_id")
+        if doc_owner is None:
+            raise HTTPException(status_code=403, detail="无权删除全局共享文档")
+        if str(doc_owner) != str(owner_id):
+            raise HTTPException(status_code=403, detail="无权删除他人私有文档")
     try:
         return delete_document_cascade(doc_id)
     except Exception as e:
