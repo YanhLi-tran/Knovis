@@ -60,6 +60,7 @@ func (s *Server) listDocuments(c *GinCompat) {
 }
 
 // deleteDocument 删除文档(级联,转发 doc-service)
+// 权限校验:从 JWT 取 user_id 传给 doc-service,普通用户只能删自己的私有文档
 func (s *Server) deleteDocument(c *GinCompat) {
 	if s.docClient == nil {
 		c.JSON(http.StatusServiceUnavailable, H{"error": "doc-service 未启用"})
@@ -70,12 +71,15 @@ func (s *Server) deleteDocument(c *GinCompat) {
 		c.JSON(http.StatusBadRequest, H{"error": "无效的文档 ID"})
 		return
 	}
-	result, err := s.docClient.DeleteDocument(c.Request().Context(), id)
+	userID := c.GetString("user_id") // 从 JWT 获取,传给 doc-service 做权限校验
+	result, err := s.docClient.DeleteDocument(c.Request().Context(), id, userID)
 	if err != nil {
+		// doc-service 返回 403 时,错误信息里包含 "HTTP 403",前端可据此提示无权限
+		log.Printf("[WARN][api] 删除文档失败 id=%d owner=%s: %v", id, userID, err)
 		c.JSON(http.StatusBadGateway, H{"error": "删除文档失败: " + err.Error()})
 		return
 	}
-	log.Printf("[INFO][api] 删除文档 id=%d chunks=%d vectors=%d", id, result.Chunks, result.Vectors)
+	log.Printf("[INFO][api] 删除文档 id=%d owner=%s chunks=%d vectors=%d", id, userID, result.Chunks, result.Vectors)
 	c.JSON(http.StatusOK, result)
 }
 

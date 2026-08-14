@@ -190,13 +190,19 @@ func (c *DocClient) ListDocuments(ctx context.Context, status, companyCode, user
 }
 
 // DeleteDocument 删除文档(级联)
-func (c *DocClient) DeleteDocument(ctx context.Context, id uint) (DeleteResult, error) {
+// userID 非空时通过 X-Owner-Id 头传给 doc-service 做权限校验:
+// 普通用户只能删自己的私有文档,全局共享文档(owner_id=NULL)禁删。
+// userID 为空(管理员直连)可删任何文档。
+func (c *DocClient) DeleteDocument(ctx context.Context, id uint, userID string) (DeleteResult, error) {
 	u := fmt.Sprintf("%s/documents/%d", c.baseURL, id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil {
 		return DeleteResult{}, err
 	}
 	c.setAuthHeaders(req) // P0-1: 子服务鉴权
+	if userID != "" {
+		req.Header.Set("X-Owner-Id", userID) // 文档权限隔离:只能删自己的私有文档
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return DeleteResult{}, fmt.Errorf("调用 doc-service DELETE /documents/%d 失败: %w", id, err)
