@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Document RAG 文档元信息(全局共享,不按用户/项目隔离)
+// Document RAG 文档元信息(owner_id 实现权限隔离:NULL=全局共享,非空=用户私有)
 type Document struct {
 	ID           uint           `gorm:"primaryKey;autoIncrement" json:"id"`
 	Filename     string         `gorm:"type:varchar(255);not null;comment:原始文件名" json:"filename"`
@@ -23,6 +23,8 @@ type Document struct {
 	ReportType   string         `gorm:"type:varchar(50);default:'年报';comment:报告类型" json:"report_type"`
 	// 手动元数据(自动解析失败时填写),JSON
 	ManualMeta   string         `gorm:"type:json;comment:手动元数据JSON" json:"manual_meta"`
+	// 文档权限隔离:NULL=全局共享(管理员上传),非空=用户私有(仅上传者可见)
+	OwnerID      *string        `gorm:"type:varchar(64);index;comment:所有者用户ID(NULL=全局共享)" json:"owner_id"`
 	CreatedAt    time.Time      `gorm:"comment:创建时间" json:"created_at"`
 	UpdatedAt    time.Time      `gorm:"comment:更新时间" json:"updated_at"`
 	DeletedAt    gorm.DeletedAt `gorm:"index;comment:软删除时间" json:"deleted_at"`
