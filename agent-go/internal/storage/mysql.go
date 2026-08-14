@@ -65,12 +65,14 @@ func InitDB(cfg *DBConfig) (*gorm.DB, error) {
 
 	// 自动建表（开发期，后续切 golang-migrate）
 	// P2: 扩展记忆系统相关表；P3: User 表（JWT 鉴权）
+	// 注意:Document/DocumentChunk 表由 docker-init.sql 创建,GORM AutoMigrate 会尝试
+	// ALTER TABLE 修改列类型(即使类型已匹配),导致 30s 超时。已从 AutoMigrate 移除。
 	if err := db.AutoMigrate(
 		&User{},
 		&Session{}, &Message{},
 		&UserConfig{}, &Project{}, &Memory{}, &MemoryArchive{}, &CrossProjectGrant{},
 		&AuditLog{},
-		&Document{}, &DocumentChunk{}, // P5: RAG 文档系统
+		// &Document{}, &DocumentChunk{}, // P5: RAG 文档表(由 docker-init.sql 管理,不自动迁移)
 		&UserSkill{}, // P7: 用户上传的私有 Skill
 	); err != nil {
 		return nil, fmt.Errorf("自动建表失败: %w", err)
