@@ -199,8 +199,11 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 	consecutiveErrors := 0
 	consecutiveToolRounds := 0 // P9: 连续调用工具轮数（assistant 无文本且仅工具调用时累加，有文本重置）
 	toolRetryCount := map[string]int{} // 工具调用 ID -> 已重试次数
-	// 历史消息快照栈（用于 rollback）
-	var messageHistoryStack [][]llm.Message
+	// 历史消息长度栈（用于 rollback）
+	// 循环内 messages 只追加不修改（前缀不可变），无需全量快照：
+	// 仅记录每轮开始时的长度，rollback 时截断回上一轮起点即可。
+	// 内存从 O(轮数×上下文大小) 降为 O(1) 额外开销。
+	var messageLenStack []int
 
 	// 推送初始 Observation（观察用户输入）
 	ch <- SSEEvent{Type: "observation", Data: map[string]any{
@@ -213,10 +216,8 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 	// OTACO 循环（maxIter=0 表示无限制，由 ctx 超时兜底）
 	for iteration := 0; maxIter == 0 || iteration < maxIter; iteration++ {
 		log.Printf("[INFO][otaco] 第 %d 轮迭代开始", iteration+1)
-		// 保存当前消息快照（用于 rollback）
-		snapshot := make([]llm.Message, len(messages))
-		copy(snapshot, messages)
-		messageHistoryStack = append(messageHistoryStack, snapshot)
+		// 记录本轮开始时的消息长度（用于 rollback 截断回上一轮起点）
+		messageLenStack = append(messageLenStack, len(messages))
 
 		// 推送 think 阶段开始
 		ch <- SSEEvent{Type: "thought", Data: map[string]any{
@@ -308,21 +309,20 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			// 持久化 rollback 轮
 			if sessionID != "" {
 				obs := &observeInfo{decision: "rollback", reason: observeReason}
-				if err := o.persister.saveRound(sessionID, iteration+1, "", obs, cleanedContent, toolCalls, nil, ""); err != nil {
-				log.Printf("[ERROR][otaco] 保存 rollback 轮失败 sessionID=%s round=%d: %v", sessionID, iteration+1, err)
+				if err := o.persister.saveRound(sessionID, baseRound+iteration+1, "", obs, cleanedContent, toolCalls, nil, ""); err != nil {
+				log.Printf("[ERROR][otaco] 保存 rollback 轮失败 sessionID=%s round=%d: %v", sessionID, baseRound+iteration+1, err)
 			}
 			}
-			// 回退到上一轮 Thought（弹出当前快照，恢复上一个）
-			if len(messageHistoryStack) >= 2 {
-				messageHistoryStack = messageHistoryStack[:len(messageHistoryStack)-1]
-				messages = make([]llm.Message, len(messageHistoryStack[len(messageHistoryStack)-1]))
-				copy(messages, messageHistoryStack[len(messageHistoryStack)-1])
-				messages = append(messages, llm.Message{
-					Role:    llm.RoleUser,
-					Content: fmt.Sprintf("[系统] 上一轮思路有误（%s），请换一种思路重新思考。", observeReason),
-				})
-			}
-			continue
+			// 回退到上一轮 Thought（弹出当前轮长度标记，截断回上一轮起点）
+		if len(messageLenStack) >= 2 {
+			messageLenStack = messageLenStack[:len(messageLenStack)-1]
+			messages = messages[:messageLenStack[len(messageLenStack)-1]]
+			messages = append(messages, llm.Message{
+				Role:    llm.RoleUser,
+				Content: fmt.Sprintf("[系统] 上一轮思路有误（%s），请换一种思路重新思考。", observeReason),
+			})
+		}
+		continue
 		}
 
 		// P9: 连续工具轮计数（assistant 无文本内容且仅调用工具 → 连续工具轮累加；有文本/最终答案则重置）
