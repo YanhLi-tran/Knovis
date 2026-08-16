@@ -119,3 +119,6 @@ data/uploads/
 *.tar.gz
 *.zip
 .qodo/
+
+# 项目内部开发文档（docs/，不入库跟踪）
+docs/
