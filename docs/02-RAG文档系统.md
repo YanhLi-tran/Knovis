@@ -155,10 +155,11 @@ query → BM25(2026-08-10 起为 jieba+rank_bm25 内存索引,原 MySQL FULLTEXT
 4. 根因:Rust HNSW 实现的搜索算法 bug,陷入局部簇
 
 **解决方案**:在 [doc-service/store.py](../doc-service/store.py) 中用 numpy 暴力 cosine 搜索替代 Chroma HNSW:
-- 新增 `_load_vec_cache()` / `_invalidate_vec_cache()`:首次查询从 Chroma 加载全部向量到内存缓存(18801×1024 float32 ≈ 73MB,1.5s)
-- `rag_search` 改用 `np.argpartition` + 矩阵乘法 dot product(向量已归一化,cosine=dot),单次 < 50ms,召回率 100%
-- `upsert_vectors` / `delete_doc_vectors` 调用 `_invalidate_vec_cache()` 失效缓存
+- 新增 `_load_vec_cache()` / `_invalidate_vec_cache()`:首次查询从 Chroma 加载全部向量到内存缓存(18801×1024 float32,内存口径:73MB 为文档口径 / 75MB 为 store.py 注释 nbytes 计算口径;2026-08-10 重摄 256/26 后为 20833 条 ≈81MB,见文首演进表),约 1.5s,启动预热后常驻无冷启动
+- `rag_search` 改用 `np.argpartition` + 矩阵乘法 dot product(向量已归一化,cosine=dot)取 top_n,支持 doc_ids 过滤(非目标文档相似度置 -1)
+- 一致性:`upsert_vectors` / `delete_doc_vectors` 调用 `_invalidate_vec_cache()` 失效缓存,并级联失效 BM25 内存索引(数据变更后下次查询重建)
 - Chroma 仍用于向量存储,仅搜索路径替换
+- **性能口径(不混用)**:「检索 <50ms、召回率 100%」是 store.py 注释的整段口径(相对 Chroma HNSW 的表述,**非评测口径**);2026-08-10 评测实测向量检索阶段 mean **4.4ms**(P95 6ms);评测口径召回 Recall@20=**94.9%**(见 03-评测体系建设.md / scripts/rag_eval_report.md)
 
 **跨文档检索验证(ALL PASS)**:
 
@@ -168,3 +169,24 @@ query → BM25(2026-08-10 起为 jieba+rank_bm25 内存索引,原 MySQL FULLTEXT
 | 五粮液 营收 | 000858 | 000858_2021_五粮液 p19 score=0.70 | ✅ |
 | 海康威视 研发 | 002415 | 002415_2021_海康威视 p15 score=0.70 | ✅ |
 | 宁德时代 电池 | 300750 | 300750_2022_宁德时代 p54 score=0.70 | ✅ |
+
+> 口径说明(以问题全记录为准):完整验证为 **6 条 ALL PASS**(五家公司:茅台/五粮液/海康/宁德/平安),上表仅留存 4 条明细;中国平安(601318)top1 同样命中正确文档。表内 `score=0.70` 为**融合加权分**(RAG 单路命中时 min-max 归一化的固定值,即 0.7×1.0+0.3×0,参见 03-评测体系建设.md 坑 1),与手动计算的 raw cosine(top1=0.8405)是两个量纲,勿混用。
+
+### 5.4 性能与演进边界(暴力 cosine 的适用性评估)
+
+> 本节为方案选择时的容量评估口径,数字为规划估算,非实测。
+
+**复杂度**:暴力 cosine 时间复杂度 O(N×D),N=向量数、D=1024;当前 2 万+ 向量预热后 mean 4.4ms,无压力。
+
+| 规模 | 内存(float32) | 单次检索 | 结论 |
+|---|---|---|---|
+| 当前(~2 万) | ~81MB(重摄后) | mean 4.4ms | ✅ 完全可行 |
+| 10 万+ | ~400MB | 约 10ms 级 | ⚠️ 仍可扛,但**应开始规划切换真 ANN** |
+| 100 万 | ≈3.9GB | 约几十 ms(并发放大) | ⚠️ 内存有压力,暴力方案边缘 |
+| 500 万 | ≈19.5GB | ≈51.2 亿次乘加,秒级 | ❌ 暴力方案不成立 |
+
+**演进路线**(按规模递增):① 向量压缩(PCA/PQ 降维)→ ② 真 ANN(Faiss IVF-PQ / HNSW 或 Milvus)→ ③ 两级检索(ANN 粗召回 + 暴力/reranker 精排)→ ④ 分片横向扩展。
+
+**架构兜底**:检索为 BM25 + 向量双路召回 + 融合,即使向量路召回下降,BM25 路仍可兜底,不会单点失效。
+
+**选型教训**:曾有 Chroma Rust HNSW 踩坑经验,未来选 ANN 库时须**重点验证召回率**(用评测集实测),不迷信 benchmark。
