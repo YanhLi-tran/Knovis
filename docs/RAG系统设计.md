@@ -113,13 +113,13 @@ query → BM25(jieba + rank_bm25 内存索引,2026-08-10 起替代 MySQL FULLTEX
 | 环节 | 实现 | 说明 |
 |---|---|---|
 | 向量存储 | Chroma `doc_global` collection | upsert/delete 不变,metadata 含 document_id/page_num/chunk_index |
-| 向量缓存 | `_vec_cache_matrix`(模块级) | 首次查询时从 Chroma 加载全部向量到内存(2026-08-03 时为 18801×1024 float32 ≈ 73MB;08-10 重摄 256/26 后向量数增长约 3 倍) |
-| 搜索 | numpy 矩阵乘法 `embeds @ qvec` | 向量已归一化(bge-large-zh),cosine similarity = dot product,单次 < 50ms |
+| 向量缓存 | `_vec_cache_matrix`(模块级) | 首次查询时从 Chroma 加载全部向量到内存(2026-08-03 时为 18801×1024 float32 ≈ 73MB;08-10 重摄 256/26 后实测 20833 条 ≈81MB) |
+| 搜索 | numpy 矩阵乘法 `embeds @ qvec` | 向量已归一化(bge-large-zh),cosine similarity = dot product,单次 < 50ms(注释整段口径;2026-08-10 评测向量检索阶段 mean 4.4ms) |
 | top_n 选取 | `np.argpartition` + `np.argsort` | 快速选 top_n 再排序,O(N) 选 + O(n log n) 排序 |
 | doc_ids 过滤 | mask 置 -1 | 非目标文档相似度置 -1,过滤后不返回 |
 | 缓存失效 | `_invalidate_vec_cache()` | upsert_vectors/delete_doc_vectors 后调用,下次查询自动重新加载 |
 
-**召回率 100%**(暴力搜索无近似),性能可接受(18801 条向量单次查询 < 50ms,首次加载 1.5s)。
+**召回率 100%**(暴力搜索无近似,**注释口径**,相对 Chroma HNSW 的表述;评测口径 Recall@20=94.9%,见《03-评测体系建设.md》),性能可接受(18801 条向量单次查询 < 50ms 为注释整段口径;2026-08-10 评测向量检索阶段实测 mean 4.4ms;2026-08-10 重摄 256/26 后向量数 20833 ≈81MB,首次加载 1.5s 量级)。
 
 ---
 
