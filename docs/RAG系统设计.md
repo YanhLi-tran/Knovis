@@ -2,7 +2,7 @@
 
 > 阶段五:企业级文档 RAG 系统(独立于记忆系统,全局共享文档库)
 >
-> 更新时间:2026-08-03
+> 更新时间:2026-08-03 | 2026-08-15 同步:分块参数已调整为 256/26(2026-08-10)、BM25 改 jieba+rank_bm25 内存索引(2026-08-10)、新增文档 owner_id 权限隔离(2026-08-13,检索/列表仅返回"全局共享+本人私有")
 
 ---
 
@@ -25,7 +25,7 @@
 | 数据隔离 | 全局共享(单 collection `doc_global`) | 企业文档库全员共享,简化权限 |
 | 服务架构 | 新建 doc-service(8003),HTTP 调 memory-service(8002) 的 /embed | 复用已加载的 bge-large-zh,不重复占 1.5GB 内存 |
 | PDF 解析 | pymupdf4llm → Markdown(保留表格) | 保留标题层级与表格结构 |
-| 分块策略 | 标题层级切分 + chunk_size=800/overlap=64 | 语义完整 + 精确召回 |
+| 分块策略 | 标题层级切分 + chunk_size=256/overlap=26(2026-08-10 起,匹配 bge max_seq_length=512 无截断;原 800/64) | 语义完整 + 精确召回 |
 | 表格处理 | 保留为 Markdown 表格,作为独立块 | 表格语义不可拆 |
 | 召回策略 | 索引粒度=chunk(800字),返回粒度=最小标题小节;小节超 2000 字 fallback 到 chunk + 前后各 1 chunk | 解决单 chunk 命中但上下文断裂痛点 |
 | Rerank | 接口完整实现 + bge-reranker-v2-m3 已评测(2026-08-05);`RERANK_ENABLED=false` 默认关闭(评测显示当前配置下轻微下降) | Before/After 数据见《03-评测体系建设.md》§六,调优后再启用 |
@@ -87,7 +87,7 @@
 ## 5. 段落召回逻辑(简历核心创新点)
 
 ```
-query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
+query → BM25(jieba + rank_bm25 内存索引,2026-08-10 起替代 MySQL FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 融合 → top-20 候选 chunk 列表(归一化 + 3:7 加权)
 [可选] rerank → top-5(RERANK_ENABLED=true 时)
 段落扩展:
@@ -113,7 +113,7 @@ query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 | 环节 | 实现 | 说明 |
 |---|---|---|
 | 向量存储 | Chroma `doc_global` collection | upsert/delete 不变,metadata 含 document_id/page_num/chunk_index |
-| 向量缓存 | `_vec_cache_matrix`(模块级) | 首次查询时从 Chroma 加载全部向量到内存(18801×1024 float32 ≈ 73MB,耗时 1.5s) |
+| 向量缓存 | `_vec_cache_matrix`(模块级) | 首次查询时从 Chroma 加载全部向量到内存(2026-08-03 时为 18801×1024 float32 ≈ 73MB;08-10 重摄 256/26 后向量数增长约 3 倍) |
 | 搜索 | numpy 矩阵乘法 `embeds @ qvec` | 向量已归一化(bge-large-zh),cosine similarity = dot product,单次 < 50ms |
 | top_n 选取 | `np.argpartition` + `np.argsort` | 快速选 top_n 再排序,O(N) 选 + O(n log n) 排序 |
 | doc_ids 过滤 | mask 置 -1 | 非目标文档相似度置 -1,过滤后不返回 |
@@ -171,8 +171,8 @@ query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 | RAG_RAG_WEIGHT | 0.7 | 向量权重 |
 | RAG_RECALL_TOP_N | 20 | 每路召回数 |
 | RAG_SECTION_MAX_LEN | 2000 | 小节超此长度 fallback |
-| RAG_CHUNK_SIZE | 800 | 分块大小 |
-| RAG_CHUNK_OVERLAP | 64 | 分块重叠 |
+| RAG_CHUNK_SIZE | 256 | 分块大小(2026-08-10 起;原 800) |
+| RAG_CHUNK_OVERLAP | 26 | 分块重叠(2026-08-10 起;原 64) |
 
 ---
 
@@ -197,14 +197,14 @@ query → BM25(chunks 表 FULLTEXT) top-20 + RAG(numpy 暴力 cosine) top-20
 
 **数据层(Go)**
 - `agent_documents` 表:文档元信息(文件名/路径/页数/分块数/状态/股票代码/公司名/年份/手动元数据/软删)
-- `agent_document_chunks` 表:分块内容(heading_path JSON/section_id/page_num/content/FULLTEXT ngram 索引)
+- `agent_document_chunks` 表:分块内容(heading_path JSON/section_id/page_num/content;FULLTEXT ngram 索引为历史遗留,BM25 已改内存索引不再依赖)
 - GORM 模型 + 仓储层 CRUD(doc_models.go + doc_repo.go)
-- AutoMigrate 自动建表 + applyPostMigrateIndexes 幂等创建 FULLTEXT 索引
+- 建表走 `sql/docker-init.sql` 与 `deploy/paratera/migrate-upgrade.sql`(Document/DocumentChunk 的 GORM AutoMigrate 已于 2026-08-14 移除,提交 6b60fb8,避免启动超时)
 
 **doc-service(Python,8003)**
 - `main.py`:7 个端点(/health、/documents/ingest、/documents/scan、/rag/search、/documents、/documents/:id、DELETE /documents/:id)
-- `parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题识别 + 800/64 滑动窗口二次切 + 表格独立块)+ 文件名元数据解析
-- `store.py`:MySQL chunks 读写 + BM25 FULLTEXT 检索 + Chroma doc_global 向量检索 + 3:7 归一化融合 + 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
+- `parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题识别 + 滑动窗口二次切,2026-08-10 起为 256/26,原 800/64 + 表格独立块)+ 文件名元数据解析
+- `store.py`:MySQL chunks 读写(PooledDB 连接池,2026-08-14 起 maxconnections=8) + BM25 内存索引检索(jieba+rank_bm25,2026-08-10 起替代 MySQL FULLTEXT) + Chroma doc_global 向量检索 + 混合融合(top-5 RRF 精排 + top-20 加权,2026-08-04 起) + 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
 - `reranker.py`:Reranker 接口完整实现(is_enabled/rerank),RERANK_ENABLED=true + RERANK_MODEL_PATH 启用;2026-08-05 已用 bge-reranker-v2-m3 完成 Before/After 评测(见 03 §六),当前默认关闭
 - `embedder_client.py`:HTTP 调 memory-service /embed_vectors(分批 32),复用 bge-large-zh 不重复加载
 

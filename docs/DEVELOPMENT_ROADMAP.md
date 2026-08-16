@@ -5,6 +5,8 @@
 > 目标岗位：大厂 AI/算法应用岗
 >
 > 演示形态：完整 Web 应用（前端 + 后端 + 演示数据）
+>
+> **2026-08-15 对齐说明**：P1-P4 任务清单已按实际完成情况勾选（含实现位置与原计划的偏差标注）；资产盘点表已更新 docker-compose 状态。
 
 ---
 
@@ -26,7 +28,7 @@
 ├─────────────────────────────────────────────────┤
 │  Agent 编排层 (OTACO = ReAct + 反思)             │ ← 已有，加 Plan-Execute
 │  ├─ 工具注册 (Registry + Skill 注册表)           │
-│  ├─ 多轮上下文管理 (会话历史 + 滑动窗口压缩)     │ ← 已有
+│  ├─ 多轮上下文管理 (会话历史 + 按需压缩)          │ ← 已有(2026-08-12 起为按需压缩) │
 │  └─ 可观测性 (trace + token 计量)                │ ← 已有(trace),token 计量待补
 ├─────────────────────────────────────────────────┤
 │  工具层                                          │
@@ -66,7 +68,8 @@
 | 全链路 trace | ✅ 已有 | X-Trace-Id 透传 + 前端调试面板(2026-08-06) |
 | 前端 | ✅ 已有 | 单文件 HTML(SSE + 审批框 + 提问框 + 调试面板) |
 | MCP 外接 | ❌ 预留 | 设计保留 Layer 3,未实现 |
-| NL2SQL / Plan-and-Execute / docker-compose | ❌ 待做 | 见 [04-待补齐项与优先级.md](./04-待补齐项与优先级.md) |
+| NL2SQL / Plan-and-Execute | ❌ 待做 | 见 [04-待补齐项与优先级.md](./04-待补齐项与优先级.md) |
+| docker-compose 一键部署 | ✅ 已有 | 2026-08-06 落地:6 容器(MySQL/Redis/Chroma/memory/doc/agent-go)+ .env.docker.example,见根 README |
 
 ---
 
@@ -130,20 +133,20 @@
 
 **任务清单**：
 
-- [ ] 选定向量库（Chroma / Milvus Lite）
-- [ ] 选定 embedding 模型（BGE-M3 本地 / text-embedding-3-small API）
-- [ ] 写文档摄入 pipeline
-  - [ ] PDF 解析（unstructured / pypdf）
-  - [ ] Markdown 解析（按标题层级切分）
-  - [ ] 通用分块策略（可配置 chunk_size / overlap）
-- [ ] 实现 `Agent_Tools/rag_search.py`
-  - [ ] 参数：`query`、`top_k`
-  - [ ] 返回：检索片段 + 来源元数据
-- [ ] 前端加文档上传入口（复用现有 `/upload` 路由扩展）
-- [ ] 后端加 `/documents/ingest` 端点（上传 → 分块 → embedding → 入库）
-- [ ] 跑通端到端演示
+- [x] 选定向量库（Chroma / Milvus Lite）→ **Chroma**（嵌入式持久化）
+- [x] 选定 embedding 模型（BGE-M3 本地 / text-embedding-3-small API）→ **bge-large-zh 本地**（1024 维）
+- [x] 写文档摄入 pipeline
+  - [x] PDF 解析（unstructured / pypdf）→ 实际用 **pymupdf4llm**（保留表格与标题层级，doc-service/parser.py）
+  - [x] Markdown 解析（按标题层级切分）
+  - [x] 通用分块策略（可配置 chunk_size / overlap；2026-08-10 起最优 256/26）
+- [x] 实现 rag_search 工具 → 实际为 **Go 实现**（agent-go/internal/tools/info/rag_search.go，FC 常驻；原计划 Python 路径未采用）
+  - [x] 参数：`query`、`top_k`（另有 `doc_ids` 过滤）
+  - [x] 返回：检索片段 + 来源元数据（doc_name/page_num/heading_path 引用溯源）
+- [x] 前端加文档上传入口（文档管理 Modal，2026-08-13 起上传自动标记私有）
+- [x] 后端加 `/documents/ingest` 端点（上传 → 分块 → embedding → 入库，Go 转发 doc-service）
+- [x] 跑通端到端演示（2026-08-03：五粮液 2021 营收问答，3 次 rag_search + 引用溯源）
 
-**完成标准**：上传一份 PDF，提问能返回带来源的答案。
+**完成标准**：上传一份 PDF，提问能返回带来源的答案。✅ 已达成
 
 ---
 
@@ -153,19 +156,16 @@
 
 **任务清单**：
 
-- [ ] 把 `rag_search` 正式注册到 ToolRegistry
-- [ ] 系统提示词扩展：告诉 LLM 何时用 RAG / 何时用 web_search / 何时用文件工具
-- [ ] 多轮上下文管理
-  - [ ] 会话历史持久化（SQLite）
-  - [ ] 按 session_id 隔离对话
-- [ ] 工具调用链路可视化
-  - [ ] 前端展示 LLM 选择了哪些工具、按什么顺序
-- [ ] 复杂场景演示案例
-  - [ ] "公司文档里有没有 X 政策" → RAG
-  - [ ] "X 政策的最新行业趋势" → RAG + web_search
-  - [ ] "把刚才的结论写到 report.md" → RAG + writeFile
+- [x] 把 `rag_search` 正式注册到 ToolRegistry（第 11 个常驻 FC 工具）
+- [x] 系统提示词扩展：告诉 LLM 何时用 RAG / 何时用 web_search / 何时用文件工具（OTACO 工作流程 + 工具描述）
+- [x] 多轮上下文管理
+  - [x] 会话历史持久化（实际用 **MySQL**，非 SQLite；13 张表）
+  - [x] 按 session_id 隔离对话（+ owner_id 用户隔离）
+- [x] 工具调用链路可视化
+  - [x] 前端展示 LLM 选择了哪些工具、按什么顺序（SSE tool_call/tool_result 事件 + 调试面板）
+- [x] 复杂场景演示案例（RAG 单独 / RAG+web_search 链式 / RAG+file_write 落盘均已验证）
 
-**完成标准**：同一问题 LLM 能合理选择多个工具组合作答。
+**完成标准**：同一问题 LLM 能合理选择多个工具组合作答。✅ 已达成
 
 ---
 
@@ -175,27 +175,27 @@
 
 **任务清单**：
 
-- [ ] 多路召回
-  - [ ] 向量检索（已有）
-  - [ ] BM25 关键词检索（rank_bm25）
-  - [ ] 元数据过滤（按文档类型/时间/标签）
-  - [ ] 加权融合（RRF 或线性加权）
-- [ ] Rerank
-  - [ ] 接入 bge-reranker-v2-m3（本地）或 Cohere rerank（API）
-  - [ ] top-20 召回 → top-5 rerank
-- [ ] 引用溯源
-  - [ ] 答案里注入 `[来源: doc_name, p3]` 标记
-  - [ ] 前端渲染成可点击卡片，点击跳转原文
-- [ ] 结构化分块升级
-  - [ ] Markdown 按标题层级切
-  - [ ] PDF 按版面切（unstructured）
-  - [ ] 代码按函数切
-- [ ] NL2SQL 工具
+- [x] 多路召回
+  - [x] 向量检索（numpy 暴力 cosine，绕过 Chroma HNSW bug）
+  - [x] BM25 关键词检索（rank_bm25；2026-08-10 起为 jieba+rank_bm25 内存索引，替代 MySQL FULLTEXT）
+  - [x] 元数据过滤（doc_ids 文档范围过滤 + owner_id 可见性过滤）
+  - [x] 加权融合（RRF **和**线性加权均有：top-5 RRF 精排 + top-20 加权融合，2026-08-04 混合策略）
+- [x] Rerank
+  - [x] 接入 bge-reranker-v2-m3（本地 CrossEncoder，已接入并完成 Before/After 评测）
+  - [x] top-20 召回 → top-5 rerank（评测显示当前配置 Recall@5 轻微下降，默认 RERANK_ENABLED=false，调优项见 04 §1.2.1）
+- [x] 引用溯源
+  - [x] 答案里注入 `[来源: doc_name, p3]` 标记
+  - [x] 前端渲染成可点击卡片（展开查看原文/页码/章节）
+- [x] 结构化分块升级
+  - [x] Markdown 按标题层级切
+  - [x] PDF 按标题层级切（pymupdf4llm 转 Markdown 后切，非 unstructured 版面切）
+  - [ ] 代码按函数切（未做）
+- [ ] NL2SQL 工具（未做）
   - [ ] 准备示例数据库（SQLite + 销售数据集）
-  - [ ] `Agent_Tools/sql_query.py`：自然语言 → SQL → 执行 → 结果
+  - [ ] sql_query 工具：自然语言 → SQL → 执行 → 结果
   - [ ] SQL 安全校验（只读、白名单表）
 
-**完成标准**：能讲出召回率/准确率提升数据，答案带可点击引用。
+**完成标准**：能讲出召回率/准确率提升数据，答案带可点击引用。✅ 已达成（NL2SQL 除外）
 
 ---
 
@@ -205,29 +205,29 @@
 
 **任务清单**：
 
-- [ ] 评测体系
-  - [ ] 构建 50-100 条评测集
-    - [ ] 单工具场景（RAG / SQL / web_search 各 15 条）
-    - [ ] 多工具编排场景（15 条）
-    - [ ] 多轮对话场景（10 条）
-  - [ ] 评测脚本
-    - [ ] 工具选择准确率
-    - [ ] 参数填充正确率
-    - [ ] 答案事实准确率（LLM-as-Judge）
-  - [ ] 评测报告输出（Markdown + 对比表格）
-- [ ] 可观测性
-  - [ ] 每次 Agent 调用生成 `trace_id`
-  - [ ] 记录：每轮思考、工具调用、token 消耗、延迟
-  - [ ] 前端"调试视图"展开看完整 trace
-  - [ ] SQLite 审计日志表
-- [ ] 工程化收尾
-  - [ ] 流式 SSE 中断恢复
-  - [ ] 工具调用失败重试 + 降级
-  - [ ] 上下文超长自动压缩（保留工具结果摘要）
-  - [ ] `docker-compose.yml` 一键部署
-  - [ ] README + 架构图
+- [x] 评测体系
+  - [x] 构建 50-100 条评测集 → 实际 **64 条 RAG + 35 条 Agent**（无 SQL 类场景，NL2SQL 未做）
+    - [x] 单工具场景（RAG / web_search；SQL 类因工具未做暂缺）
+    - [x] 多工具编排场景
+    - [x] 多轮对话场景
+  - [x] 评测脚本（rag_eval.py / agent_eval.py，支持 --category/--strategy）
+    - [x] 工具选择准确率
+    - [x] 参数填充正确率
+    - [x] 答案事实准确率（LLM-as-Judge）
+  - [x] 评测报告输出（Markdown + 对比表格 + 分阶段耗时 P50/P95）
+- [x] 可观测性
+  - [x] 每次 Agent 调用生成 `trace_id`（X-Trace-Id 全链路透传，2026-08-06）
+  - [x] 记录：每轮思考、工具调用、token 消耗、延迟
+  - [x] 前端"调试视图"展开看完整 trace（调试面板；"逐轮完整 trace 树"待深化）
+  - [x] 审计日志表（实际用 **MySQL** agent_audit_logs，非 SQLite）
+- [x] 工程化收尾
+  - [ ] 流式 SSE 中断恢复（未做）
+  - [x] 工具调用失败重试（OTACO retry 决策 + LLM 429/5xx 指数退避，2026-08-10）；降级未做
+  - [x] 上下文超长自动压缩（2026-08-12 起为按需压缩：≥80% LLM 自主 / ≥90% Go 强制）
+  - [x] `docker-compose.yml` 一键部署（2026-08-06，6 容器）
+  - [x] README + 架构图（根 README + docs 各专题文档）
 
-**完成标准**：有评测报告数据、有 trace 演示、docker-compose 一键起。
+**完成标准**：有评测报告数据、有 trace 演示、docker-compose 一键起。✅ 已达成（SSE 中断恢复除外）
 
 ---
 

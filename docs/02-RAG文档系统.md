@@ -6,6 +6,19 @@
 
 ---
 
+## ⚠️ 后续演进(本文归档于 2026-08-03,以下变化已落地)
+
+| 变化 | 时间 | 说明 |
+|---|---|---|
+| 分块参数 800/64 → **256/26** | 2026-08-10 | 256 匹配 bge-large-zh `max_seq_length=512` 无截断;15 份年报已全量重摄,重测 Recall@20=94.9%、MRR=0.9、平均耗时 126ms(见 [rag_eval_report.md](../scripts/rag_eval_report.md)) |
+| BM25:MySQL FULLTEXT → **jieba + rank_bm25 内存索引** | 2026-08-10 | FULLTEXT(ngram) 对中文分词失效;改内存索引 + 启动预热,BM25 mean 79.6→44.7ms;MySQL 侧改用 PooledDB 连接池 |
+| MySQL 连接池 20 → **8** | 2026-08-14 | 避免扫描导入占满 `max_connections` 导致 Knovis 注册/登录失败(见 [07-并发瓶颈与数据库调优.md](./07-并发瓶颈与数据库调优.md)) |
+| **文档 owner_id 权限隔离** | 2026-08-13 | `agent_documents` 加 owner_id;agent-go 从 JWT 取 user_id 以 `X-Owner-Id` 透传;检索/列表仅返回"全局共享 + 本人私有";普通用户禁删全局文档 |
+| 前端移除扫描导入 | 2026-08-13 | 文档管理 UI 仅保留用户上传(自动标记私有);`/documents/scan` API 保留供管理员使用 |
+| Chroma HNSW 修复 | 不变 | numpy 暴力 cosine 检索仍在使用(见 §5.3) |
+
+---
+
 ## 一、阶段五概览(2026-08-03 完成)
 
 构建独立的企业年报 RAG 系统,支持上传 PDF → 结构化分块 → 多路召回 → 段落级上下文召回 → 引用溯源回答。LLM 通过 FC 常驻工具 `rag_search` 自主检索。
@@ -16,8 +29,8 @@
 
 **新建 doc-service(Python,8003)**:
 - `doc-service/main.py`:7 个端点(/health、/documents/ingest、/documents/scan、/rag/search、/documents、/documents/:id、DELETE /documents/:id)
-- `doc-service/parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题 + 800/64 滑动窗口二次切 + 表格独立块)+ 文件名元数据解析(股票代码_年份_公司简称_全称.pdf)
-- `doc-service/store.py`:MySQL chunks 读写 + BM25 FULLTEXT 检索 + Chroma doc_global 向量检索 + 3:7 归一化融合 + 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
+- `doc-service/parser.py`:pymupdf4llm 解析 PDF → Markdown + 标题层级分块(中文编号/Markdown 标题 + 滑动窗口二次切,2026-08-10 起为 256/26,原 800/64 + 表格独立块)+ 文件名元数据解析(股票代码_年份_公司简称_全称.pdf)
+- `doc-service/store.py`:MySQL chunks 读写 + BM25 检索(2026-08-10 起为 jieba+rank_bm25 内存索引,替代 MySQL FULLTEXT)+ Chroma doc_global 向量检索 + 混合融合(2026-08-04 起为 top-5 RRF 精排 + top-20 加权融合)+ 段落召回(section_id 聚合,超 2000 字 fallback 到 chunk+前后各1)
 - `doc-service/reranker.py`:Reranker 接口完整实现,`RERANK_ENABLED=true` + `RERANK_MODEL_PATH` 启用;2026-08-05 已用 bge-reranker-v2-m3 完成 Before/After 评测(见《03-评测体系建设.md》§六),当前默认关闭待调优
 - `doc-service/embedder_client.py`:HTTP 调 memory-service /embed_vectors(分批 32),复用 bge-large-zh 不重复加载
 
@@ -44,8 +57,8 @@
 ## 二、核心创新:段落级上下文召回
 
 ```
-query → BM25(chunks FULLTEXT) top-20 + RAG(Chroma 向量) top-20
-融合 → top-20 候选(归一化 + 3:7 加权)
+query → BM25(2026-08-10 起为 jieba+rank_bm25 内存索引,原 MySQL FULLTEXT) top-20 + RAG(Chroma 向量) top-20
+融合 → top-20 候选(top-5 RRF 精排 + top-20 加权融合,2026-08-04 混合策略)
 [可选] rerank → top-5(RERANK_ENABLED=true 时)
 段落扩展:
   for each chunk:
@@ -122,7 +135,7 @@ query → BM25(chunks FULLTEXT) top-20 + RAG(Chroma 向量) top-20
 - 15 份年报(18801 chunks)全量导入约 30 分钟(CPU 模式需 2-2.5 小时)
 - [memory-service/main.py](../memory-service/main.py) `/health` 接口返回 `device` 字段
 
-### 5.2 全量数据导入
+### 5.2 全量数据导入(2026-08-03 记录;2026-08-10 起 256/26 分块重摄,chunk 数已变化)
 
 - 15 份上市公司年报全量导入完成:600519 贵州茅台(2021-2023)/ 000858 五粮液(2021-2023)/ 002415 海康威视(2021-2023)/ 300750 宁德时代(2021-2023)/ 601318 中国平安(2021-2023)
 - 共 18801 chunks,Chroma `doc_global` collection 18801 条向量

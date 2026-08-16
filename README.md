@@ -22,7 +22,7 @@ cp .env.docker.example .env
 #    - RERANK_MODEL_HOST_PATH  rerank 模型路径（RERANK_ENABLED=true 时）
 
 # 3. （可选）若有已有 Chroma 向量数据，复制到对应目录避免重新 embedding：
-#    cp -r /path/to/chroma-doc  ./data/chroma-doc     # doc-service 的 18801 chunks
+#    cp -r /path/to/chroma-doc  ./data/chroma-doc     # doc-service 的全量年报向量数据(256/26 分块)
 #    cp -r /path/to/chroma-mem  ./data/chroma-memory   # memory-service 的记忆向量
 ```
 
