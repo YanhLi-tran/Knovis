@@ -4084,7 +4084,7 @@ async function loadDocuments() {
         const data = await resp.json();
         const docs = data.documents || [];
         $('docsCount').textContent = docs.length + ' 个文档';
-        if (!docs.length) { $('docsList').innerHTML = emptyStateSVG('上传 PDF 或扫描目录导入文档'); return; }
+        if (!docs.length) { $('docsList').innerHTML = emptyStateSVG('上传 PDF 导入你的私有文档'); return; }
         $('docsList').innerHTML = docs.map(d => {
             const status = d.status || 'ready';
             return '<div class="doc-item"><div class="doc-icon">📄</div><div class="doc-info"><div class="doc-name">' + escapeHtml(d.filename || d.title || d.name || '未命名') + '</div><div class="doc-meta">' + (d.company_code ? '<span class="meta-tag">' + escapeHtml(d.company_code) + '</span>' : '') + (d.total_chunks != null ? '<span>' + d.total_chunks + ' chunks</span>' : '') + '<span>' + formatTime(d.created_at) + '</span></div></div><span class="doc-status ' + status + '">' + status + '</span><button class="doc-delete" onclick="deleteDocument(' + d.id + ')">🗑</button></div>';
