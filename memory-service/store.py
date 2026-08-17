@@ -292,6 +292,14 @@ def rag_search(project_id: str, query_vector: List[float], top_n: int = 10) -> L
     out = []
     for i, _id in enumerate(ids):
         # cosine distance → similarity ∈ [0, 1]（clamp）
+        # ⚠️ 量纲说明（2026-08-16 审计标注）：
+        #   本公式是「压缩伪相似度」：1 - dist/2 把 distance∈[0,2] 线性映射到 [0,1]，
+        #   不是真 cosine（真 cosine = 1 - distance）。同一对向量在本刻度下的分数
+        #   高于真 cosine（如本刻度 0.92 ≈ 真 cosine 0.84）。
+        #   影响范围：Go 端 extractor 判重阈值 0.92、keyword 降权 0.82 建立在本量纲上——
+        #   实际拦截线比名义值更宽松（更不易误杀），方向符合「宁漏勿杀」设计，属"碰巧安全"。
+        #   对比：doc-service 的 rag_raw_score 是归一化向量直接 dot（真 cosine），两侧阈值不可混用。
+        #   改此公式属行为变更：需重新定标判重/降权阈值（方案 C 量纲统一时一并处理）。
         dist = float(dists[i]) if i < len(dists) else 1.0
         sim = max(0.0, min(1.0, 1.0 - dist / 2.0))
         meta = metas[i] if i < len(metas) else {}
