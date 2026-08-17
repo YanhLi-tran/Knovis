@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 
 	"agent-go/internal/llm"
@@ -57,6 +58,8 @@ func (r *Registry) Register(def *SkillDefinition) {
 
 // List 元信息列表（注入 system prompt 的 Skill 注册表；全局内置 + 用户私有）
 // userID 非空时额外包含该用户的私有 skill（多租户隔离：A 用户看不到 B 用户的 skill）
+// 按 Name 稳定排序：注册表文本注入 system prompt 稳定区，map 无序遍历会导致
+// 顺序随机变化打穿 KV 前缀缓存（与 tools/registry.go List/ToDefinitions 同理）
 func (r *Registry) List(userID string) []SkillMetadata {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -70,6 +73,7 @@ func (r *Registry) List(userID string) []SkillMetadata {
 		}
 		list = append(list, def.Metadata)
 	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return list
 }
 

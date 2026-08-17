@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 	"sync"
 	"time"
 
@@ -54,6 +55,8 @@ func (r *Registry) Get(name string) (*Tool, bool) {
 }
 
 // List 列出所有工具
+// 按名称稳定排序：工具列表注入 system prompt、tools 数组参与每轮请求序列化，
+// map 无序遍历会导致顺序随机变化，打穿 LLM 服务端 KV 前缀缓存（顺序参与 tokenize）
 func (r *Registry) List() []*Tool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -61,10 +64,11 @@ func (r *Registry) List() []*Tool {
 	for _, t := range r.tools {
 		list = append(list, t)
 	}
+	sort.Slice(list, func(i, j int) bool { return list[i].Name < list[j].Name })
 	return list
 }
 
-// ToDefinitions 转为 LLM 可用的 ToolDefinition 列表
+// ToDefinitions 转为 LLM 可用的 ToolDefinition 列表（按名称稳定排序，保证请求间序列化一致，前缀缓存友好）
 func (r *Registry) ToDefinitions() []llm.ToolDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -79,6 +83,7 @@ func (r *Registry) ToDefinitions() []llm.ToolDefinition {
 			},
 		})
 	}
+	sort.Slice(defs, func(i, j int) bool { return defs[i].Function.Name < defs[j].Function.Name })
 	return defs
 }
 
