@@ -963,6 +963,11 @@ func (o *Orchestrator) loadUserBehavior(userID string) storage.AgentBehavior {
 // injectBackupArgs 为 sandbox_exec / file_write 注入备份透传标记（所有模式生效，P9）
 // _backup_mode: 指定备份方式（snapshot/git），危险操作（删除/覆盖）执行前先备份到 .backup/，实现可回退
 // _yolo: 仅 yolo 模式注入 true，local-agent 据此跳过命令白名单（ask/auto 模式不注入，白名单仍生效）
+//
+// 安全（2026-08-16 审计修复）：下划线透传标记（_yolo/_backup_mode）只能由服务端写入。
+// 模型输出不可信——若模型（或被注入的文档/搜索内容诱导）在 arguments 中伪造 "_yolo": true，
+// local-agent 的 yoloMode() 会据此跳过命令白名单；ask 模式尚有审批闸门，auto 模式
+// （自动放行 + 无审批）下等于任意命令执行。故注入前先无条件清除这两个 key。
 func injectBackupArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
 	switch call.Function.Name {
 	case "sandbox_exec", "file_write":
@@ -973,6 +978,9 @@ func injectBackupArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return
 	}
+	// 防参数注入：清除模型可能伪造的透传标记，再写入服务端权威值
+	delete(args, "_yolo")
+	delete(args, "_backup_mode")
 	args["_backup_mode"] = behavior.EffectiveBackupMode()
 	isYolo := behavior.EffectiveSandboxMode() == "yolo"
 	if isYolo {
@@ -983,7 +991,7 @@ func injectBackupArgs(call *llm.ToolCall, behavior storage.AgentBehavior) {
 		return
 	}
 	call.Function.Arguments = string(b)
-	log.Printf("[INFO][otaco] 注入工具 %s 备份标记 backup_mode=%s yolo=%v", call.Function.Name, behavior.EffectiveBackupMode(), isYolo)
+	log.Printf("[INFO][otaco] 注入工具 %s 备份标记 backup_mode=%s yolo=%v(已清除模型伪造标记)", call.Function.Name, behavior.EffectiveBackupMode(), isYolo)
 }
 
 // buildTools 构建工具定义列表（含 ask_user + load_skill + session 已加载 skill 工具）
