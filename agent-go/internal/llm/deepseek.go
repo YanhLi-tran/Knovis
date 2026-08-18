@@ -70,10 +70,23 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 	go func() {
 		defer close(ch)
 
+		// 指标采集：TTFT（请求发出→首个内容/tool_call delta）与端到端耗时
+		// defer 统一落环形缓冲，正常结束与各错误路径都会记录
+		start := time.Now()
+		m := CallMetric{Timestamp: start, Model: p.model, TTFTMs: -1}
+		firstToken := false
+		defer func() {
+			m.TotalMs = time.Since(start).Milliseconds()
+			DefaultMetrics().Record(m)
+		}()
+
 		req.Model = p.model
 		req.Stream = true
+		// 流式返回 usage（最后一个 chunk），供 token 用量与 KV 缓存命中指标采集
+		req.StreamOptions = &StreamOptions{IncludeUsage: true}
 		body, err := json.Marshal(req)
 		if err != nil {
+			m.Error = "marshal_request: " + err.Error()
 			ch <- StreamChunk{FinishReason: "error"}
 			log.Printf("[llm] 请求序列化失败: %v", err)
 			return
@@ -82,6 +95,7 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 		// P0-2: 带重试的请求(仅重试 429/5xx, 指数退避 3 次)
 		httpReq, err := http.NewRequestWithContext(ctx, "POST", p.baseURL+p.chatPath, bytes.NewReader(body))
 		if err != nil {
+			m.Error = "new_request: " + err.Error()
 			ch <- StreamChunk{FinishReason: "error"}
 			log.Printf("[llm] 创建请求失败: %v", err)
 			return
@@ -94,10 +108,12 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 		if traceID != "" {
 			httpReq.Header.Set("X-Trace-Id", traceID)
 		}
+		m.TraceID = traceID
 		log.Printf("[INFO][llm] ChatStream 请求 model=%s trace=%s", p.model, traceID)
 
 		resp, err := p.doRequestWithRetry(ctx, httpReq)
 		if err != nil {
+			m.Error = "request: " + err.Error()
 			ch <- StreamChunk{FinishReason: "error"}
 			log.Printf("[llm] 请求失败(重试后仍失败): %v", err)
 			return
@@ -106,12 +122,14 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 
 		if resp.StatusCode != http.StatusOK {
 			errBody, _ := io.ReadAll(resp.Body)
+			m.Error = fmt.Sprintf("http_%d", resp.StatusCode)
+			m.FinishReason = "error"
 			ch <- StreamChunk{FinishReason: "error"}
 			log.Printf("[llm] API 返回 %d: %s", resp.StatusCode, string(errBody[:min(len(errBody), 500)]))
 			return
 		}
 
-// 解析 SSE 流
+		// 解析 SSE 流
 		scanner := bufio.NewScanner(resp.Body)
 		scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024) // 1MB buffer
 
@@ -141,6 +159,12 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 					chunk.DeltaContent += choice.Delta.Content
 				}
 
+				// TTFT：首个内容或 tool_call delta 即视为首 token
+				if !firstToken && (choice.Delta.Content != "" || len(choice.Delta.ToolCalls) > 0) {
+					firstToken = true
+					m.TTFTMs = time.Since(start).Milliseconds()
+				}
+
 				// 累积 tool_calls
 				for _, rtc := range choice.Delta.ToolCalls {
 					tc, exists := toolCallAccumulator[rtc.Index]
@@ -165,11 +189,16 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 
 				if choice.FinishReason != "" {
 					chunk.FinishReason = choice.FinishReason
+					m.FinishReason = choice.FinishReason
 				}
 			}
 
 			if sse.Usage != nil {
 				chunk.Usage = sse.Usage
+				m.PromptTokens = sse.Usage.PromptTokens
+				m.CompletionTokens = sse.Usage.CompletionTokens
+				m.CacheHitTokens = sse.Usage.PromptCacheHitTokens
+				m.CacheMissTokens = sse.Usage.PromptCacheMissTokens
 			}
 
 			// 有内容或 finish_reason 时推送
@@ -184,6 +213,7 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 			for _, tc := range toolCallAccumulator {
 				finalCalls = append(finalCalls, *tc)
 			}
+			m.FinishReason = "tool_calls"
 			ch <- StreamChunk{
 				ToolCalls:    finalCalls,
 				FinishReason: "tool_calls",
@@ -191,6 +221,7 @@ func (p *DeepSeekProvider) ChatStream(ctx context.Context, req ChatRequest) <-ch
 		}
 
 		if err := scanner.Err(); err != nil {
+			m.Error = "read_stream: " + err.Error()
 			log.Printf("[llm] 流读取错误: %v", err)
 		}
 	}()

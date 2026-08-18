@@ -57,6 +57,14 @@ type ChatRequest struct {
 	Tools    []ToolDefinition `json:"tools,omitempty"`
 	Model    string          `json:"model"`
 	Stream   bool            `json:"stream"`
+	// StreamOptions 流式选项（OpenAI 协议标准字段；include_usage=true 时
+	// 最后一个 chunk 携带 usage，供 token 用量与 KV 缓存命中指标采集）
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions OpenAI 协议 stream_options
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // StreamChunk 流式响应的一个片段
@@ -72,4 +80,7 @@ type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// DeepSeek 上下文缓存用量（非破坏性追加；非 DeepSeek 兼容端点不返回时为 0）
+	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens"`
+	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens"`
 }
