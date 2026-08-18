@@ -1,4 +1,4 @@
-﻿package api
+package api
 
 import (
 	"io"
@@ -174,6 +174,9 @@ func (s *Server) registerRoutes(srv *rest.Server) {
 	srv.AddRoute(rest.Route{Method: http.MethodDelete, Path: "/documents/:id", Handler: s.adapt(s.deleteDocument)})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/documents/scan", Handler: s.adapt(s.scanDocuments)})
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/rag/debug", Handler: s.adapt(s.ragDebug)})
+
+	// LLM 调用指标（KV 缓存命中率 / TTFT / token 用量，前端 LLM 指标面板用）
+	srv.AddRoute(rest.Route{Method: http.MethodGet, Path: "/llm/metrics", Handler: s.adapt(s.llmMetrics)})
 
 	// P7: 用户私有 Skill 管理（上传/列表/删除，鉴权后按 user_id 隔离）
 	srv.AddRoute(rest.Route{Method: http.MethodPost, Path: "/skills/upload", Handler: s.adapt(s.uploadUserSkill)})
