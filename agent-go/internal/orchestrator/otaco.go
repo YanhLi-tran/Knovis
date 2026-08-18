@@ -148,20 +148,21 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			}
 		}
 		// 追加本轮用户输入
+		// 注意：当前时间与上下文状态随后拼到本条 user 消息末尾（不注入 system prompt），
+		// 使 system prompt 完全静态——DeepSeek 上下文缓存按 token 流前缀逐块匹配，
+		// 任何落在 system 内的动态内容都会打断其后（含 tools 数组）的缓存命中。
 		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: query})
 
-		// 计算上下文占比并注入 system prompt 末尾（KV Cache 友好：前缀不变，占比放末尾）
-		// 生效上下文长度：用户自定义 > 项目级 > 默认 64000（persister.effectiveMaxContextLen）
+		// 计算上下文占比（生效上下文长度：用户自定义 > 项目级 > 默认 64000）
 		maxCtxLen := o.persister.effectiveMaxContextLen(sessionID)
 		estimator := llm.NewTokenEstimator()
 		totalTokens := estimator.EstimateMessages(messages)
 		pct := estimator.EstimatePercentage(totalTokens, maxCtxLen)
 		if pct > 0 {
 			ctxInfo := fmt.Sprintf("\n\n## 上下文状态\n当前 token: %d/%d (%.1f%%)", totalTokens, maxCtxLen, pct)
-			// 追加到 system message 末尾（最易变，放末尾，KV Cache 友好）
-			if len(messages) > 0 && messages[0].Role == llm.RoleSystem {
-				messages[0].Content += ctxInfo
-			}
+			// 动态内容（时间 + 占比）追加到本轮 user 消息末尾，保持在消息流最尾，
+			// 不污染 system/tools 静态前缀（KV 缓存命中优化）
+			messages[len(messages)-1].Content += nowTimeBlock() + ctxInfo
 			log.Printf("[INFO][otaco] 上下文占比 token=%d/%d (%.1f%%) sessionID=%s", totalTokens, maxCtxLen, pct, sessionID)
 			// 超 90% 强制同步压缩（兜底，防止 LLM 未自主调用工具导致超长）
 			if pct >= 90 && sessionID != "" {
@@ -775,11 +776,14 @@ func (o *Orchestrator) handleAskUser(ctx context.Context, ch chan<- SSEEvent, ca
 }
 
 // buildSystemPrompt 组装 system prompt
-// memoryBlock 为 P2 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5），插入到工具列表之后、当前时间之前
+// memoryBlock 为 P2 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5），插入到工具列表之后
 // userID 用于 Skill 注册表按用户过滤（用户私有 skill 仅 owner 可见）
 // sessionTitle/projectName 为当前会话上下文（P8：会话标题 + 所属项目名），注入后供 skill（如 kb_summary 输出文档目录）使用
-// 注入顺序（KV Cache 友好：稳定内容靠前，易变靠后）：
-//   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定) → memoryBlock(易变) → 会话上下文(易变) → 当前时间(最易变)
+// 注入顺序（KV Cache 友好：system prompt 完全静态，动态内容移入当前轮 user 消息）：
+//   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定)
+//   → skill 注册表(稳定) → memoryBlock(稳定) → 会话上下文(稳定)
+// 当前时间与上下文占比不再注入 system prompt（动态内容会打断 system+tools 前缀的
+// DeepSeek 上下文缓存连续块匹配），改由 Run() 拼到本轮 user 消息末尾。
 func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sessionTitle string, projectName string) string {
 	var sb strings.Builder
 
@@ -877,7 +881,7 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sess
 	}
 
 	// P4: Skill 注册表注入（工具列表之后、记忆块之前）
-	// 顺序（KV Cache 友好）：soul → rule_basic → OTACO流程 → 工具列表 → skill 注册表 → memoryBlock → 当前时间
+	// 顺序（KV Cache 友好）：soul → rule_basic → OTACO流程 → 工具列表 → skill 注册表 → memoryBlock → 会话上下文
 	// Skill 元信息每个约 25 tokens，详细 schema 由 load_skill 按需拉取
 	if o.skillReg != nil {
 		skillBlock := skill.BuildSkillRegistryBlock(o.skillReg.List(userID))
@@ -887,13 +891,14 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sess
 	}
 
 	// P2: 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5）
-	// 放在工具列表之后、当前时间之前：工具列表稳定（KV Cache 命中），记忆块按查询变化
+	// 放在工具列表之后：工具列表稳定（KV Cache 命中）；记忆块随项目/查询变化，
+	// 由外层负责保证其在会话期间保持一致（BuildMemoryBlock 每对话构建一次）
 	if memoryBlock != "" {
 		sb.WriteString("\n## 记忆上下文\n")
 		sb.WriteString(memoryBlock)
 	}
 
-	// P8: 当前会话上下文块（供 skill 输出文档目录等使用；放在记忆块之后、当前时间之前）
+	// P8: 当前会话上下文块（供 skill 输出文档目录等使用）
 	sb.WriteString("\n## 当前会话上下文\n")
 	if projectName != "" {
 		sb.WriteString("- 所属项目: " + projectName + "\n")
@@ -906,18 +911,20 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sess
 		sb.WriteString("- 会话标题: 未命名会话\n")
 	}
 
-	// 当前时间放在 system prompt 最末尾：前缀（人格+规则+OTACO流程+工具）完全稳定，
-	// 最大化命中 KV Cache；只有时间这小段每请求变化。
-	// 显式使用 Asia/Shanghai 时区，与 .env 中 SESSION_TIMEZONE 保持一致。
+	return sb.String()
+}
+
+// nowTimeBlock 构建当前时间信息块
+// 注入当前轮 user 消息末尾（Run 中与上下文状态一起拼接），保持 system prompt 完全静态，
+// 避免动态内容打断 system+tools 前缀的上下文缓存连续命中。
+// 显式使用 Asia/Shanghai 时区，与 .env 中 SESSION_TIMEZONE 保持一致。
+func nowTimeBlock() string {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
 		loc = time.Local
 	}
 	now := time.Now().In(loc)
-	sb.WriteString(fmt.Sprintf("\n## 当前时间\n%s（时区: Asia/Shanghai）\n",
-		now.Format("2006-01-02 15:04:05 Monday")))
-
-	return sb.String()
+	return fmt.Sprintf("\n\n## 当前时间\n%s（时区: Asia/Shanghai）", now.Format("2006-01-02 15:04:05 Monday"))
 }
 
 // resolveSessionContext 查询当前会话标题与所属项目名（P8）
