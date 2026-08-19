@@ -51,13 +51,16 @@ curl http://localhost:8003/health   # doc-service
 curl -X POST http://localhost:8003/rag/search \
   -H "Content-Type: application/json" \
   -d '{"query": "五粮液 2021 营业收入", "top_k": 5}'
+
+# LLM 指标（KV 缓存命中率 / TTFT / token 用量，需 JWT；前端顶栏 📊 面板同源）
+curl http://localhost:8001/llm/metrics -H "Authorization: Bearer <token>"
 ```
 
 ### 服务端口
 
 | 服务 | 端口 | 说明 |
 | --- | --- | --- |
-| agent-go | 8001 | Go 主服务（OTACO 编排 + FC 工具 + SSE 流式对话） |
+| agent-go | 8001 | Go 主服务（OTACO 编排 + FC 工具 + SSE 流式对话 + LLM 指标：KV 缓存命中率/TTFT） |
 | memory-service | 8002 | Python 记忆服务（embedding + 混合检索） |
 | doc-service | 8003 | Python RAG 文档服务（BM25 + 向量 + rerank） |
 | MySQL | 3306 | 数据库（agent_go + knovis 两个库） |
