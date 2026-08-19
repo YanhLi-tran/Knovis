@@ -36,6 +36,7 @@ except ImportError:
     sys.exit(1)
 
 DOC_SERVICE_URL = os.getenv("DOC_SERVICE_URL", "http://127.0.0.1:8003")
+DOC_SERVICE_API_KEY = os.getenv("DOC_SERVICE_API_KEY", "")  # P0-1 鉴权头(doc-service 开启鉴权时必带)
 EVAL_FILE = Path(__file__).parent / "eval" / "rag_eval.jsonl"
 REPORT_FILE = Path(__file__).parent / "rag_eval_report.md"
 REFUSAL_SCORE_THRESHOLD = 0.3  # 兼容旧引用(已弃用,改用 cosine 阈值)
@@ -68,8 +69,11 @@ def call_rag_search(query: str, top_k: int, strategy: str):
     if strategy:
         body["strategy"] = strategy
     try:
+        headers = {}
+        if DOC_SERVICE_API_KEY:
+            headers["X-API-Key"] = DOC_SERVICE_API_KEY  # doc-service ApiKeyMiddleware 校验
         resp = requests.post(
-            f"{DOC_SERVICE_URL}/rag/search", json=body, timeout=HTTP_TIMEOUT
+            f"{DOC_SERVICE_URL}/rag/search", json=body, timeout=HTTP_TIMEOUT, headers=headers
         )
         resp.raise_for_status()
         return resp.json()
