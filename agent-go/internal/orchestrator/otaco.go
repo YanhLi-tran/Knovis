@@ -122,8 +122,9 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		// P9: 加载用户 Agent 行为设置（连续工具轮上限 / 沙箱权限模式 / 备份模式，覆盖全局默认）
 		behavior := o.loadUserBehavior(userID)
 
-		// 组装 system prompt（skill 注册表在此注入，静态，一次性构建）
-		systemPrompt := o.buildSystemPrompt(memoryBlock, userID, sessionTitle, projectName)
+		// 组装 system prompt（完全静态：skill 注册表在此注入，一次性构建；
+		// memoryBlock/时间/上下文状态不再进 system，见下方 user 消息拼接）
+		systemPrompt := o.buildSystemPrompt(userID, sessionTitle, projectName)
 		// toolDefs 在 OTACO 循环内每轮构建：load_skill 执行后下一轮需包含新加载的 skill 工具
 
 		// 加载历史（如果有 sessionID）
@@ -148,10 +149,17 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 			}
 		}
 		// 追加本轮用户输入
-		// 注意：当前时间与上下文状态随后拼到本条 user 消息末尾（不注入 system prompt），
+		// 动态内容（memoryBlock / 当前时间 / 上下文状态）随后拼到本条 user 消息末尾，
 		// 使 system prompt 完全静态——DeepSeek 上下文缓存按 token 流前缀逐块匹配，
-		// 任何落在 system 内的动态内容都会打断其后（含 tools 数组）的缓存命中。
-		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: query})
+		// 任何落在 system 内的动态内容（memoryBlock 按 query 检索、时间每秒变）都会
+		// 打断其后（含 tools 数组）的缓存命中。
+		// user 消息内顺序：query（任务锚点，放开头保指令遵循）→ memoryBlock（背景）
+		// → 时间（环境）→ 上下文状态；对本轮命中无影响，且随历史固化为稳定前缀。
+		userContent := query
+		if memoryBlock != "" {
+			userContent += "\n\n## 记忆上下文\n" + memoryBlock
+		}
+		messages = append(messages, llm.Message{Role: llm.RoleUser, Content: userContent})
 
 		// 计算上下文占比（生效上下文长度：用户自定义 > 项目级 > 默认 64000）
 		maxCtxLen := o.persister.effectiveMaxContextLen(sessionID)
@@ -269,10 +277,13 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 				"reason":    "输出最终回答",
 			}}
 			// 持久化最终轮（首轮直接回答时也要保存 user 消息）
+			// 落库内容 = 发给 LLM 的完整 user 消息（query + 动态后缀），
+			// 保证 loadHistory 重建的 token 流与本次请求一致（跨请求缓存前缀稳定）；
+			// 消费侧（记忆提取/摘要/标题）按标记剥离后缀取干净 query。
 			if sessionID != "" {
 				queryToSave := ""
 				if iteration == 0 {
-					queryToSave = query
+					queryToSave = userContent
 				}
 				obs := &observeInfo{decision: "pass", reason: "已获取所有需要的信息"}
 				if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, nil, finalAnswer); err != nil {
@@ -444,11 +455,11 @@ func (o *Orchestrator) Run(ctx context.Context, query string, apiKey string, ses
 		}}
 		log.Printf("[INFO][otaco] observe 决策 iteration=%d decision=%s reason=%s", iteration+1, obsDecision, obsReason)
 
-		// 持久化本轮 OTACO（含首轮用户输入）
+		// 持久化本轮 OTACO（含首轮用户输入，完整 user 消息含动态后缀，与 LLM 请求一致）
 		if sessionID != "" {
 			queryToSave := ""
 			if iteration == 0 {
-				queryToSave = query
+				queryToSave = userContent
 			}
 			obs := &observeInfo{decision: obsDecision, reason: obsReason}
 			if err := o.persister.saveRound(sessionID, baseRound+iteration+1, queryToSave, obs, cleanedContent, toolCalls, toolResults, ""); err != nil {
@@ -775,16 +786,17 @@ func (o *Orchestrator) handleAskUser(ctx context.Context, ch chan<- SSEEvent, ca
 	}
 }
 
-// buildSystemPrompt 组装 system prompt
-// memoryBlock 为 P2 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5），插入到工具列表之后
+// buildSystemPrompt 组装 system prompt（2026-08-19 起完全静态）
 // userID 用于 Skill 注册表按用户过滤（用户私有 skill 仅 owner 可见）
 // sessionTitle/projectName 为当前会话上下文（P8：会话标题 + 所属项目名），注入后供 skill（如 kb_summary 输出文档目录）使用
-// 注入顺序（KV Cache 友好：system prompt 完全静态，动态内容移入当前轮 user 消息）：
+// 注入顺序（KV Cache 友好：system prompt 完全静态，全部动态内容移入当前轮 user 消息）：
 //   soul(稳定,可关) → rule_basic(稳定,必注) → OTACO流程(稳定) → 工具列表(稳定)
-//   → skill 注册表(稳定) → memoryBlock(稳定) → 会话上下文(稳定)
-// 当前时间与上下文占比不再注入 system prompt（动态内容会打断 system+tools 前缀的
-// DeepSeek 上下文缓存连续块匹配），改由 Run() 拼到本轮 user 消息末尾。
-func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sessionTitle string, projectName string) string {
+//   → skill 注册表(稳定) → 会话上下文(稳定,会话内不变)
+// memoryBlock（按 query 检索、跨请求变化）、当前时间、上下文占比均不注入 system prompt，
+// 由 Run() 拼到本轮 user 消息末尾（query → memoryBlock → 时间 → 上下文状态）——
+// DeepSeek 上下文缓存按 token 流前缀逐块匹配，system 内任何动态 token 都会打断
+// 其后（含 tools 数组）的缓存命中。
+func (o *Orchestrator) buildSystemPrompt(userID string, sessionTitle string, projectName string) string {
 	var sb strings.Builder
 
 	appCfg := o.configMgr.GetAppConfig()
@@ -890,15 +902,12 @@ func (o *Orchestrator) buildSystemPrompt(memoryBlock string, userID string, sess
 		}
 	}
 
-	// P2: 记忆注入块（user 档案 + 项目信息 + 项目记忆 top5）
-	// 放在工具列表之后：工具列表稳定（KV Cache 命中）；记忆块随项目/查询变化，
-	// 由外层负责保证其在会话期间保持一致（BuildMemoryBlock 每对话构建一次）
-	if memoryBlock != "" {
-		sb.WriteString("\n## 记忆上下文\n")
-		sb.WriteString(memoryBlock)
-	}
+	// P2: 记忆注入块已移出 system prompt（2026-08-19）：memoryBlock 按当前 query 检索、
+	// 跨请求内容会变化，放 system 内会打断其后（会话上下文+tools）的缓存前缀匹配；
+	// 现由 Run() 拼到当前轮 user 消息末尾（query → memoryBlock → 时间 → 上下文状态），
+	// system prompt 彻底静态（soul..OTACO..工具列表..skill 注册表..会话上下文）。
 
-	// P8: 当前会话上下文块（供 skill 输出文档目录等使用）
+	// P8: 当前会话上下文块（供 skill 输出文档目录等使用；同一会话内标题/项目名不变）
 	sb.WriteString("\n## 当前会话上下文\n")
 	if projectName != "" {
 		sb.WriteString("- 所属项目: " + projectName + "\n")

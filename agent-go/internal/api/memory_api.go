@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"agent-go/internal/memory"
 	"agent-go/internal/storage"
 
 	"gorm.io/gorm"
@@ -772,6 +773,12 @@ func (s *Server) listSummarizedMessages(c *GinCompat) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, H{"error": "查询已压缩消息失败: " + err.Error()})
 		return
+	}
+	// user 消息落库含动态后缀（KV 缓存优化：落库与发 LLM 一致），展示侧剥离取用户原话
+	for i := range msgs {
+		if msgs[i].Role == "user" {
+			msgs[i].Content = memory.StripDynamicSuffix(msgs[i].Content)
+		}
 	}
 	c.JSON(http.StatusOK, H{
 		"messages": msgs,

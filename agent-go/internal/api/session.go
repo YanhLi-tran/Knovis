@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
+	"agent-go/internal/memory"
 	"agent-go/internal/storage"
-
 )
 
 // newUUID 生成 UUID v4（避免引入 google/uuid 依赖）
@@ -257,6 +257,14 @@ func (s *Server) listSessionMessages(c *GinCompat) {
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, H{"error": "查询消息失败: " + err.Error()})
 		return
+	}
+
+	// user 消息落库含动态后缀（记忆上下文/当前时间/上下文状态，KV 缓存优化：落库与
+	// 发 LLM 一致保证跨请求前缀稳定）；历史回放仅展示用户原话，返回前剥离
+	for i := range msgs {
+		if msgs[i].Role == "user" {
+			msgs[i].Content = memory.StripDynamicSuffix(msgs[i].Content)
+		}
 	}
 
 	c.JSON(http.StatusOK, H{

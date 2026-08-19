@@ -86,10 +86,11 @@ func (e *Extractor) MaybeLLMExtract(ctx context.Context, projectID, ownerID, ses
 	}
 
 	// 拼装对话文本（仅 user + assistant 最终回答，跳过 observe/tool 阶段）
+	// user 消息落库含动态后缀（记忆/时间/上下文状态，KV 缓存优化），提取前剥离取用户原话
 	var sb strings.Builder
 	for _, m := range msgs {
 		if m.Role == "user" && m.Content != "" {
-			sb.WriteString("用户: " + m.Content + "\n")
+			sb.WriteString("用户: " + StripDynamicSuffix(m.Content) + "\n")
 		} else if m.Role == "assistant" && m.Content != "" && m.Stage != "observe" {
 			sb.WriteString("助手: " + m.Content + "\n")
 		}

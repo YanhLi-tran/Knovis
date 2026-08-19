@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"agent-go/internal/llm"
+	"agent-go/internal/memory"
 	"agent-go/internal/storage"
 )
 
@@ -187,7 +188,11 @@ func (p *persister) effectiveMaxContextLen(sessionID string) int {
 
 // saveRound 保存一轮 OTACO 的全部消息（原子事务）
 // round: 当前轮次（从 1 开始）
-// query: 本轮用户输入（仅第 0 轮需要保存）
+// query: 本轮用户输入（仅第 0 轮需要保存；含动态后缀的完整 user 消息，
+//
+//	与发给 LLM 的内容一致，保证 loadHistory 重建 token 流 = 本次请求 token 流，
+//	跨请求缓存前缀稳定；消费侧用 stripDynamicSuffix 剥离后缀）
+//
 // observe: Observation 决策信息
 // thought: assistant 思考内容
 // toolCalls: assistant 发起的工具调用
@@ -346,7 +351,12 @@ func (p *persister) summarizeHistory(sessionID string, apiKey string, provider l
 		sb.WriteString("\n\n## 新增对话内容\n")
 	}
 	for _, m := range msgs {
-		sb.WriteString(fmt.Sprintf("[第%d轮/%s/%s] %s\n", m.Round, m.Role, m.Stage, truncate(m.Content, 500)))
+		content := m.Content
+		// user 消息含动态后缀（记忆/时间/上下文状态），摘要输入剥离取用户原话
+		if m.Role == "user" {
+			content = memory.StripDynamicSuffix(content)
+		}
+		sb.WriteString(fmt.Sprintf("[第%d轮/%s/%s] %s\n", m.Round, m.Role, m.Stage, truncate(content, 500)))
 	}
 
 	// 调用 LLM 生成合并摘要
